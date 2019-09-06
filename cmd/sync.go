@@ -33,8 +33,9 @@ var syncCmd = &cobra.Command{
 			logger.Fatal(err)
 		}
 
-		for _, project := range projects {
-			logger.Infof("Updating project %s", project.FullPath)
+		logger.Infof("Found %d projects.", len(projects))
+		for index, project := range projects {
+			logger.Infof("Updating Project #%d: %s", index + 1, project.FullPath)
 
 			if err := manager.EnsureBranchesAndProtection(project); err != nil {
 				logger.Errorf("failed to ensure branches of repo %v: %v", project.FullPath, err)
