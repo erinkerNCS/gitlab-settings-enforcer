@@ -14,10 +14,8 @@ const (
 
 var (
   errFileDoesNotExist                      = errors.New("given config file does not exist")
-  errOnlyOneOfBlacklistAndWhitelistAllowed = errors.New("only one of ProjectBlacklist and ProjectWhitelist is allowed, not both")
-
-  errSettingsNameMustBeEmpty      = errors.New("settings.name must be empty")
-  errSettingsNamespaceMustBeEmpty = errors.New("settings.namespace must be empty")
+  errOnlyOneOfBlacklistAndWhitelistAllowed = errors.New("only one is allowed: project_blacklist / project_whitelist")
+  errProjectSettingsNameMustBeEmpty        = errors.New("project_settings.name must be empty")
 )
 
 // Config stores the root group name and some additional configuration values
@@ -28,7 +26,7 @@ type Config struct {
   ProjectBlacklist    []string                   `json:"project_blacklist"`
   ProjectWhitelist    []string                   `json:"project_whitelist"`
   ProtectedBranches   []ProtectedBranch          `json:"protected_branches"`
-  Settings            *gitlab.EditProjectOptions `json:"settings"`
+  ProjectSettings     *gitlab.EditProjectOptions `json:"project_settings"`
 }
 
 // ProtectedBranch defines who can act on a protected branch

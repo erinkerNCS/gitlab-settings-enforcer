@@ -41,7 +41,7 @@ var syncCmd = &cobra.Command{
         logger.Errorf("failed to ensure branches of repo %v: %v", project.FullPath, err)
       }
 
-      if err := manager.UpdateSettings(project); err != nil {
+      if err := manager.UpdateProjectSettings(project); err != nil {
         logger.Errorf("failed to update settings of repo %v: %v", project.FullPath, err)
       }
     }

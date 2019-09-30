@@ -1,7 +1,7 @@
-# gitlab-project-settings-state-enforcer
+# GitLab Settings Enforcer
 
-Enforces settings within GitLab by a reading config file and talking to the
-GitLab API(s).
+Enforces GitLab project settings by a reading config file and talking to
+the GitLab API(s).
 
 # Usage
 
@@ -15,12 +15,15 @@ providing a Config object. The config object has the following fields:
 
 | Field                   | Type              | Required | Content                                                                                                          | Default |
 |-------------------------|-------------------|----------|------------------------------------------------------------------------------------------------------------------|---------|
-| `group_name`            | string            | yes      | The path of the root group (e.g. `example` or `some/nested/example`)                                             |         |
-| `project_blacklist`     | []string          | no       | A list of projects to blacklist (cannot be set when project_whitelist is used)                                   | []      |
-| `project_whitelist`     | []string          | no       | A list of projects to whitelist (cannot be set when project_blacklist is used)                                   | []      |
-| `create_default_branch` | bool              | no       | Whether the default branch configured in `settings.default_branch` should be created if it doesn't exist already |         |
+| `group_name`            | string            | yes      | The path of the root group<BR>(e.g. `example` or `some/nested/example`)                                          |         |
+| `project_blacklist`     | []string          | no       | A list of projects to blacklist<BR>(cannot be set when project_whitelist is used)                                | []      |
+| `project_whitelist`     | []string          | no       | A list of projects to whitelist<BR>(cannot be set when project_blacklist is used)                                | []      |
+| `create_default_branch` | bool              | no       | Whether the default branch configured in `project_settings.default_branch` should be created if it doesn't exist |         |
 | `protected_branches`    | []ProtectedBranch | no       | A list of branches to protect, together with the infos which roles are allowed to merge or push.                 |         |
-| `settings`              | Object            | yes      | The gitlab settings to change. Possible keys: https://docs.gitlab.com/ce/api/projects.html#edit-project          |         |
+| `m_r_approvals`         | Object            | no       | The gitlab project merge request approval settings to change. [Possible keys](https://docs.gitlab.com/ee/api/merge_request_approvals.html#change-configuration) |         |
+| `m_r_approver_group`    | Object            | no       | The gitlab project merge request approver group(s) to include.                                                   |         |
+| `m_r_approver_user`     | Object            | no       | The gitlab project merge request approver user(s) to include.                                                    |         |
+| `project_settings`      | Object            | yes      | The gitlab project settings to change. [Possible keys](https://docs.gitlab.com/ce/api/projects.html#edit-project) |         |
 
 
 `ProtectedBranch` 
@@ -60,7 +63,7 @@ An example config might look like the following:
     { "name": "develop", "push_access_level": "maintainer", "merge_access_level": "developer"},
     { "name": "master", "push_access_level": "maintainer", "merge_access_level": "developer"}
   ],
-  "settings": {
+  "project_settings": {
     "default_branch": "develop",
     "issues_enabled": true,
     "merge_requests_enabled": true,

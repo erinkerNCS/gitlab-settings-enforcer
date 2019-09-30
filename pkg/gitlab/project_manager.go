@@ -92,7 +92,7 @@ func (m *ProjectManager) EnsureBranchesAndProtection(project Project) error {
 
   for _, b := range m.config.ProtectedBranches {
     if resp, err := m.protectedBranchesClient.UnprotectRepositoryBranches(project.ID, b.Name); err != nil && resp.StatusCode != http.StatusNotFound {
-      return fmt.Errorf("failed to unprotect branch %v befor protection: %v", b.Name, err)
+      return fmt.Errorf("failed to unprotect branch %v before protection: %v", b.Name, err)
     }
 
     opt := &gitlab.ProtectRepositoryBranchesOptions{
@@ -111,13 +111,13 @@ func (m *ProjectManager) EnsureBranchesAndProtection(project Project) error {
 
 func (m *ProjectManager) ensureDefaultBranch(project Project) error {
   if !m.config.CreateDefaultBranch ||
-    m.config.Settings.DefaultBranch == nil ||
-    *m.config.Settings.DefaultBranch == "master" {
+    m.config.ProjectSettings.DefaultBranch == nil ||
+    *m.config.ProjectSettings.DefaultBranch == "master" {
     return nil
   }
 
   opt := &gitlab.CreateBranchOptions{
-    Branch: m.config.Settings.DefaultBranch,
+    Branch: m.config.ProjectSettings.DefaultBranch,
     Ref:    gitlab.String("master"),
   }
 
@@ -140,11 +140,11 @@ func (m *ProjectManager) ensureDefaultBranch(project Project) error {
   return nil
 }
 
-// UpdateSettings updates the project settings on gitlab
-func (m *ProjectManager) UpdateSettings(project Project) error {
+// UpdateProjectSettings updates the project settings on gitlab
+func (m *ProjectManager) UpdateProjectSettings(project Project) error {
   m.logger.Debugf("Updating settings of project %s ...", project.FullPath)
 
-  if _, _, err := m.projectsClient.EditProject(project.ID, m.config.Settings); err != nil {
+  if _, _, err := m.projectsClient.EditProject(project.ID, m.config.ProjectSettings); err != nil {
     return fmt.Errorf("failed to update settings or project %s: %v", project.FullPath, err)
   }
 
