@@ -52,8 +52,11 @@ func checkConfig(cfg *Config) (*Config, error) {
     return nil, errOnlyOneOfBlacklistAndWhitelistAllowed
   }
 
-  if cfg.ProjectSettings.Name != nil {
-    return nil, errProjectSettingsNameMustBeEmpty
+  if cfg.ProjectSettings != nil {
+    // Contains ProjectsSettings section
+    if cfg.ProjectSettings.Name != nil {
+      return nil, errProjectSettingsNameMustBeEmpty
+    }
   }
 
   return cfg, nil

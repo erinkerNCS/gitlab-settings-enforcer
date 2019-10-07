@@ -21,12 +21,13 @@ var (
 // Config stores the root group name and some additional configuration values
 // settings documented at https://godoc.org/github.com/xanzy/go-gitlab#CreateProjectOptions
 type Config struct {
-  GroupName           string                     `json:"group_name"`
-  CreateDefaultBranch bool                       `json:"create_default_branch"`
-  ProjectBlacklist    []string                   `json:"project_blacklist"`
-  ProjectWhitelist    []string                   `json:"project_whitelist"`
-  ProtectedBranches   []ProtectedBranch          `json:"protected_branches"`
-  ProjectSettings     *gitlab.EditProjectOptions `json:"project_settings"`
+  GroupName           string                                            `json:"group_name"`
+  CreateDefaultBranch bool                                              `json:"create_default_branch"`
+  ProjectBlacklist    []string                                          `json:"project_blacklist"`
+  ProjectWhitelist    []string                                          `json:"project_whitelist"`
+  ProtectedBranches   []ProtectedBranch                                 `json:"protected_branches"`
+  ApprovalSettings    *gitlab.ChangeApprovalConfigurationOptions        `json:"approval_settings"`
+  ProjectSettings     *gitlab.EditProjectOptions                        `json:"project_settings"`
 }
 
 // ProtectedBranch defines who can act on a protected branch

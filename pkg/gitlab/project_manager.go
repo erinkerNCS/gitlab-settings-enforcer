@@ -144,11 +144,44 @@ func (m *ProjectManager) ensureDefaultBranch(project Project) error {
 func (m *ProjectManager) UpdateProjectSettings(project Project) error {
   m.logger.Debugf("Updating settings of project %s ...", project.FullPath)
 
-  if _, _, err := m.projectsClient.EditProject(project.ID, m.config.ProjectSettings); err != nil {
+  m.logger.Debugf("---[ HTTP Payload ]---\n")
+  m.logger.Debugf("%+v\n", m.config.ProjectSettings)
+
+  returned_project, response, err := m.projectsClient.EditProject(project.ID, m.config.ProjectSettings)
+
+  m.logger.Debugf("---[ HTTP Response ]---\n")
+  m.logger.Debugf("%s\n", response)
+  m.logger.Debugf("---[ Returned Project ]---\n")
+  m.logger.Debugf("%s\n", returned_project)
+
+  if err != nil {
     return fmt.Errorf("failed to update settings or project %s: %v", project.FullPath, err)
   }
 
   m.logger.Debugf("Updating settings of project %s done.", project.FullPath)
+
+  return nil
+}
+
+// UpdateProjectMergeRequestSettings updates the project settings on gitlab
+func (m *ProjectManager) UpdateProjectApprovalSettings(project Project) error {
+  m.logger.Debugf("Updating merge request approval settings of project %s [%d]...", project.FullPath, project.ID)
+
+  m.logger.Debugf("---[ HTTP Payload ]---\n")
+  m.logger.Debugf("%+v\n", m.config.ApprovalSettings)
+
+  returned_mr, response, err := m.projectsClient.ChangeApprovalConfiguration(project.ID, m.config.ApprovalSettings)
+
+  m.logger.Debugf("---[ HTTP Response ]---\n")
+  m.logger.Debugf("%s\n", response)
+  m.logger.Debugf("---[ Returned MR ]---\n")
+  m.logger.Debugf("%s\n", returned_mr)
+
+  if err != nil {
+    return fmt.Errorf("failed to update merge request approval settings or project %s: %v", project.FullPath, err)
+  }
+
+  m.logger.Debugf("Updating merge request approval settings of project %s done.", project.FullPath)
 
   return nil
 }

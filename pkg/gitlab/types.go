@@ -18,6 +18,7 @@ type groupsClient interface {
 }
 
 type projectsClient interface {
+  ChangeApprovalConfiguration(pid interface{}, opt *gitlab.ChangeApprovalConfigurationOptions, options ...gitlab.OptionFunc) (*gitlab.ProjectApprovals, *gitlab.Response, error)
   EditProject(pid interface{}, opt *gitlab.EditProjectOptions, options ...gitlab.OptionFunc) (*gitlab.Project, *gitlab.Response, error)
 }
 

@@ -20,9 +20,7 @@ providing a Config object. The config object has the following fields:
 | `project_whitelist`     | []string          | no       | A list of projects to whitelist<BR>(cannot be set when project_blacklist is used)                                | []      |
 | `create_default_branch` | bool              | no       | Whether the default branch configured in `project_settings.default_branch` should be created if it doesn't exist |         |
 | `protected_branches`    | []ProtectedBranch | no       | A list of branches to protect, together with the infos which roles are allowed to merge or push.                 |         |
-| `m_r_approvals`         | Object            | no       | The gitlab project merge request approval settings to change. [Possible keys](https://docs.gitlab.com/ee/api/merge_request_approvals.html#change-configuration) |         |
-| `m_r_approver_group`    | Object            | no       | The gitlab project merge request approver group(s) to include.                                                   |         |
-| `m_r_approver_user`     | Object            | no       | The gitlab project merge request approver user(s) to include.                                                    |         |
+| `approval_settings`     | Object            | no       | The gitlab project approval settings to change. [Possible keys](https://docs.gitlab.com/ee/api/merge_request_approvals.html#change-configuration) |         |
 | `project_settings`      | Object            | yes      | The gitlab project settings to change. [Possible keys](https://docs.gitlab.com/ce/api/projects.html#edit-project) |         |
 
 
@@ -63,6 +61,12 @@ An example config might look like the following:
     { "name": "develop", "push_access_level": "maintainer", "merge_access_level": "developer"},
     { "name": "master", "push_access_level": "maintainer", "merge_access_level": "developer"}
   ],
+  "approval_settings": {
+    "disable_overriding_approvers_per_merge_request": false,
+    "merge_requests_author_approval": false,
+    "merge_requests_disable_committers_approval": true,
+    "reset_approvals_on_push": true
+  },
   "project_settings": {
     "default_branch": "develop",
     "issues_enabled": true,
