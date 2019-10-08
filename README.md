@@ -1,6 +1,6 @@
 # GitLab Settings Enforcer
 
-Enforces GitLab project settings by a reading config file and talking to
+Enforces GitLab project settings by reading a config file and talking to
 the GitLab API(s).
 
 # Usage
