@@ -3,6 +3,9 @@ package gitlab
 import (
   "fmt"
   "net/http"
+  "net/url"
+  "regexp"
+  "strings"
 
   "github.com/xanzy/go-gitlab"
 
@@ -45,12 +48,49 @@ func NewProjectManager(
 func (m *ProjectManager) GetProjects() ([]Project, error) {
   var repos []Project
 
-  m.logger.Debugf("Fetching gitlab repos for group %s ...", m.config.GroupName)
+  m.logger.Debugf("Fetching projects under %s path ...", m.config.GroupName)
 
-  for {
-    projects, resp, err := m.groupsClient.ListGroupProjects(m.config.GroupName, listGroupProjectOps, addIncludeSubgroups)
+  // Identify Group/Subgroup's ID
+  var groupID int
+  if strings.ContainsAny(m.config.GroupName, "/") {
+    // Nested Path
+    m.logger.Debugf("Identifying subgroup's GroupID for %s ...", m.config.GroupName)
+    path_tokens := strings.Split(m.config.GroupName, "/")
+    var base_group string = path_tokens[0]
+
+    subgroups, _, err := m.groupsClient.ListSubgroups(base_group, listSubgroupOps)
     if err != nil {
-      return []Project{}, fmt.Errorf("failed to fetch GitLab projects or group %q: %v", m.config.GroupName, err)
+      return []Project{}, fmt.Errorf("failed to fetch GitLab subgroups for %q: %v", base_group, err)
+    }
+
+    var count int = 1
+    for _, g := range subgroups {
+      m.logger.Debugf("---[ SubGroup #%d ]---\n", count)
+      m.logger.Debugf("%+v\n", g)
+      matched, _ := regexp.MatchString("^"+m.config.GroupName+"$", g.FullPath)
+      if matched {
+        groupID = g.ID
+      }
+      count += 1
+    }
+  } else {
+    // Only Base
+    m.logger.Debugf("Identifying %s's GroupID", m.config.GroupName)
+    // BugFix: Without this pre-processing, go-gitlab library stalls.
+    var group_name string = strings.Replace(url.PathEscape(m.config.GroupName), ".", "%2E", -1)
+    group, _, err := m.groupsClient.GetGroup(group_name)
+    if err != nil {
+      return []Project{}, fmt.Errorf("failed to fetch GitLab group info for %q: %v", group_name, err)
+    }
+    groupID = group.ID
+  }
+  m.logger.Debugf("GroupID is %d", groupID)
+
+  // Get Project objects
+  for {
+    projects, resp, err := m.groupsClient.ListGroupProjects(groupID, listGroupProjectOps, addIncludeSubgroups)
+    if err != nil {
+      return []Project{}, fmt.Errorf("failed to fetch GitLab projects for %s [%d]: %v", m.config.GroupName, groupID, err)
     }
 
     for _, p := range projects {
@@ -71,7 +111,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
     }
 
     // Exit the loop when we've seen all pages.
-    if listGroupProjectOps.Page >= resp.TotalPages {
+    if listGroupProjectOps.Page >= resp.TotalPages || resp.TotalPages == 1 {
       break
     }
 
@@ -79,7 +119,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
     listGroupProjectOps.Page = resp.NextPage
   }
 
-  m.logger.Debugf("Fetching gitlab repos done. Got %d repos.", len(repos))
+  m.logger.Debugf("Fetching projects under path done. Retrieved %d.", len(repos))
 
   return repos, nil
 }
