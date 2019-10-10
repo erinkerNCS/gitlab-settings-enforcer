@@ -5,6 +5,7 @@ import (
   "net/http"
   "net/url"
   "regexp"
+  "strconv"
   "strings"
 
   "github.com/xanzy/go-gitlab"
@@ -44,6 +45,48 @@ func NewProjectManager(
   }
 }
 
+// GetSubgroupID walks the provided path. returning the Group ID of the last desired subgroup.
+func (m *ProjectManager) GetSubgroupID(path string, indent int, group_ID int) (int, error) {
+  var subgroup_ID int
+
+  subpath := strings.Split(path, "/")[indent]
+  path_count := len(strings.Split(path, "/"))-1
+  m.logger.Debugf("Walking %s, looking for %s[%d/%d].", path, subpath, indent, path_count)
+
+  var group_info string
+  if group_ID == 0 {
+    // Use base of path to get first group ID
+    group_info = strings.Split(path, "/")[0]
+  } else {
+    // Use parent ID provided.
+    group_info = strconv.Itoa(group_ID)
+  }
+
+  m.logger.Debugf("Getting Subgroup(s) of %v.", group_info)
+  subgroups, _, err := m.groupsClient.ListSubgroups(group_info, listSubgroupOps)
+  if err != nil {
+    return 0, fmt.Errorf("failed to fetch GitLab subgroups for %s [%s]: %v", path, subpath, err)
+  }
+
+  // Get desired subgroup_ID
+  m.logger.Debugf("---[ Subgroup(s) Found: %d ]---\n", len(subgroups))
+  for _, g := range subgroups {
+    m.logger.Debugf(">>> %s <<<: %+v\n", g.Name, g)
+    matched, _ := regexp.MatchString("^"+subpath+"$", g.Path)
+    if matched {
+      subgroup_ID = g.ID
+    }
+  }
+
+  if indent != path_count {
+    m.logger.Debugf("Found Group ID %d, going deeper.", subgroup_ID)
+    subgroup_ID, _ = m.GetSubgroupID(path, indent+1, subgroup_ID)
+  }
+
+  m.logger.Debugf("Coming back up from %s.", subpath)
+  return subgroup_ID, nil
+}
+
 // GetProjects fetches a list of accessible repos within the groups set in config file
 func (m *ProjectManager) GetProjects() ([]Project, error) {
   var repos []Project
@@ -52,30 +95,16 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
 
   // Identify Group/Subgroup's ID
   var groupID int
+
+  m.logger.Debugf("Identifying %s's GroupID", m.config.GroupName)
   if strings.ContainsAny(m.config.GroupName, "/") {
     // Nested Path
-    m.logger.Debugf("Identifying subgroup's GroupID for %s ...", m.config.GroupName)
-    path_tokens := strings.Split(m.config.GroupName, "/")
-    var base_group string = path_tokens[0]
-
-    subgroups, _, err := m.groupsClient.ListSubgroups(base_group, listSubgroupOps)
+    group_ID, err := m.GetSubgroupID(m.config.GroupName, 1, 0)
     if err != nil {
-      return []Project{}, fmt.Errorf("failed to fetch GitLab subgroups for %q: %v", base_group, err)
+      return []Project{}, fmt.Errorf("failed to fetch GitLab group info for %q: %v", m.config.GroupName, err)
     }
-
-    var count int = 1
-    for _, g := range subgroups {
-      m.logger.Debugf("---[ SubGroup #%d ]---\n", count)
-      m.logger.Debugf("%+v\n", g)
-      matched, _ := regexp.MatchString("^"+m.config.GroupName+"$", g.FullPath)
-      if matched {
-        groupID = g.ID
-      }
-      count += 1
-    }
+    groupID = group_ID
   } else {
-    // Only Base
-    m.logger.Debugf("Identifying %s's GroupID", m.config.GroupName)
     // BugFix: Without this pre-processing, go-gitlab library stalls.
     var group_name string = strings.Replace(url.PathEscape(m.config.GroupName), ".", "%2E", -1)
     group, _, err := m.groupsClient.GetGroup(group_name)
@@ -84,6 +113,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
     }
     groupID = group.ID
   }
+
   m.logger.Debugf("GroupID is %d", groupID)
 
   // Get Project objects
