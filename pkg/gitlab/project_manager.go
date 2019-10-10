@@ -155,12 +155,19 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
 }
 
 // EnsureBranchesAndProtection ensures that 1) the default branch exists and 2) all of the protected branches are configured correctly
-func (m *ProjectManager) EnsureBranchesAndProtection(project Project) error {
-  if err := m.ensureDefaultBranch(project); err != nil {
+func (m *ProjectManager) EnsureBranchesAndProtection(project Project, dryrun bool) error {
+  if err := m.ensureDefaultBranch(project, dryrun); err != nil {
     return err
   }
 
   for _, b := range m.config.ProtectedBranches {
+    if dryrun {
+      m.logger.Infof("DRYRUN: Skipped executing API call [UnprotectRepositoryBranches] on %v branch.", b.Name)
+      m.logger.Infof("DRYRUN: Skipped executing API call [ProtectRepositoryBranches] on %v branch.", b.Name)
+      continue
+    }
+
+    // Remove protections (if present)
     if resp, err := m.protectedBranchesClient.UnprotectRepositoryBranches(project.ID, b.Name); err != nil && resp.StatusCode != http.StatusNotFound {
       return fmt.Errorf("failed to unprotect branch %v before protection: %v", b.Name, err)
     }
@@ -171,6 +178,7 @@ func (m *ProjectManager) EnsureBranchesAndProtection(project Project) error {
       MergeAccessLevel: b.MergeAccessLevel.Value(),
     }
 
+    // (Re)add protections
     if _, _, err := m.protectedBranchesClient.ProtectRepositoryBranches(project.ID, opt); err != nil {
       return fmt.Errorf("failed to protect branch %s: %v", b.Name, err)
     }
@@ -179,7 +187,7 @@ func (m *ProjectManager) EnsureBranchesAndProtection(project Project) error {
   return nil
 }
 
-func (m *ProjectManager) ensureDefaultBranch(project Project) error {
+func (m *ProjectManager) ensureDefaultBranch(project Project, dryrun bool) error {
   if !m.config.CreateDefaultBranch ||
     m.config.ProjectSettings.DefaultBranch == nil ||
     *m.config.ProjectSettings.DefaultBranch == "master" {
@@ -203,26 +211,37 @@ func (m *ProjectManager) ensureDefaultBranch(project Project) error {
     return fmt.Errorf("failed to check for default branch existence, got unexpected response status code %d", resp.StatusCode)
   }
 
-  if _, _, err := m.branchesClient.CreateBranch(project.ID, opt); err != nil {
-    return fmt.Errorf("failed to create default branch %s: %v", *opt.Branch, err)
+  if dryrun {
+    m.logger.Infof("DRYRUN: Skipped executing API call [CreateBranch]")
+  } else {
+    if _, _, err := m.branchesClient.CreateBranch(project.ID, opt); err != nil {
+      return fmt.Errorf("failed to create default branch %s: %v", *opt.Branch, err)
+    }
   }
 
   return nil
 }
 
 // UpdateProjectSettings updates the project settings on gitlab
-func (m *ProjectManager) UpdateProjectSettings(project Project) error {
+func (m *ProjectManager) UpdateProjectSettings(project Project, dryrun bool) error {
   m.logger.Debugf("Updating settings of project %s ...", project.FullPath)
 
   m.logger.Debugf("---[ HTTP Payload ]---\n")
   m.logger.Debugf("%+v\n", m.config.ProjectSettings)
 
-  returned_project, response, err := m.projectsClient.EditProject(project.ID, m.config.ProjectSettings)
+  var returned_project *gitlab.Project
+  var response *gitlab.Response
+  var err error
+  if dryrun {
+    m.logger.Infof("DRYRUN: Skipped executing API call [EditProject]")
+  } else {
+    returned_project, response, err = m.projectsClient.EditProject(project.ID, m.config.ProjectSettings)
+  }
 
   m.logger.Debugf("---[ HTTP Response ]---\n")
-  m.logger.Debugf("%s\n", response)
+  m.logger.Debugf("%v\n", response)
   m.logger.Debugf("---[ Returned Project ]---\n")
-  m.logger.Debugf("%s\n", returned_project)
+  m.logger.Debugf("%v\n", returned_project)
 
   if err != nil {
     return fmt.Errorf("failed to update settings or project %s: %v", project.FullPath, err)
@@ -234,18 +253,25 @@ func (m *ProjectManager) UpdateProjectSettings(project Project) error {
 }
 
 // UpdateProjectMergeRequestSettings updates the project settings on gitlab
-func (m *ProjectManager) UpdateProjectApprovalSettings(project Project) error {
+func (m *ProjectManager) UpdateProjectApprovalSettings(project Project, dryrun bool) error {
   m.logger.Debugf("Updating merge request approval settings of project %s [%d]...", project.FullPath, project.ID)
 
   m.logger.Debugf("---[ HTTP Payload ]---\n")
   m.logger.Debugf("%+v\n", m.config.ApprovalSettings)
 
-  returned_mr, response, err := m.projectsClient.ChangeApprovalConfiguration(project.ID, m.config.ApprovalSettings)
+  var returned_mr *gitlab.ProjectApprovals
+  var response *gitlab.Response
+  var err error
+  if dryrun {
+    m.logger.Infof("DRYRUN: Skipped executing API call [ChangeApprovalConfiguration]")
+  } else {
+    returned_mr, response, err = m.projectsClient.ChangeApprovalConfiguration(project.ID, m.config.ApprovalSettings)
+  }
 
   m.logger.Debugf("---[ HTTP Response ]---\n")
-  m.logger.Debugf("%s\n", response)
+  m.logger.Debugf("%v\n", response)
   m.logger.Debugf("---[ Returned MR ]---\n")
-  m.logger.Debugf("%s\n", returned_mr)
+  m.logger.Debugf("%v\n", returned_mr)
 
   if err != nil {
     return fmt.Errorf("failed to update merge request approval settings or project %s: %v", project.FullPath, err)
