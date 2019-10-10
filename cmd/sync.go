@@ -18,7 +18,7 @@ var syncCmd = &cobra.Command{
         logger.Fatal(err)
       }
     }
-    if env.Dryrun == true {
+    if env.Dryrun {
       logger.Infof("DRYRUN: No changes will be implemented.")
     }
 
