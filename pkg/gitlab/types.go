@@ -13,6 +13,12 @@ type Project struct {
   FullPath string
 }
 
+// currentState stores current Project state for each project interacted with
+type ProjectSettings struct {
+  Approval gitlab.ProjectApprovals `json:"approval_settings,omitempty"`
+  General  gitlab.Project          `json:"project_settings,omitempty"`
+}
+
 type groupsClient interface {
   GetGroup(gid interface{}, options ...gitlab.OptionFunc) (*gitlab.Group, *gitlab.Response, error)
   ListGroupProjects(gid interface{}, opt *gitlab.ListGroupProjectsOptions, options ...gitlab.OptionFunc) ([]*gitlab.Project, *gitlab.Response, error)
@@ -21,6 +27,8 @@ type groupsClient interface {
 
 type projectsClient interface {
   ChangeApprovalConfiguration(pid interface{}, opt *gitlab.ChangeApprovalConfigurationOptions, options ...gitlab.OptionFunc) (*gitlab.ProjectApprovals, *gitlab.Response, error)
+  GetApprovalConfiguration(pid interface{}, options ...gitlab.OptionFunc) (*gitlab.ProjectApprovals, *gitlab.Response, error)
+  GetProject(pid interface{}, opt *gitlab.GetProjectOptions, options ...gitlab.OptionFunc) (*gitlab.Project, *gitlab.Response, error)
   EditProject(pid interface{}, opt *gitlab.EditProjectOptions, options ...gitlab.OptionFunc) (*gitlab.Project, *gitlab.Response, error)
 }
 

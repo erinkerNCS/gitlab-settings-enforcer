@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+  "encoding/json"
   "fmt"
   "net/http"
   "net/url"
@@ -8,12 +9,11 @@ import (
   "strconv"
   "strings"
 
+  "github.com/sirupsen/logrus"
   "github.com/xanzy/go-gitlab"
 
   "github.com/erinkerNCS/gitlab-settings-enforcer/pkg/config"
   "github.com/erinkerNCS/gitlab-settings-enforcer/pkg/internal/stringslice"
-
-  "github.com/sirupsen/logrus"
 )
 
 // ProjectManager fetches a list of repositories from GitLab
@@ -24,6 +24,8 @@ type ProjectManager struct {
   protectedBranchesClient protectedBranchesClient
   branchesClient          branchesClient
   config                  *config.Config
+  OriginalSettings        map[string]*ProjectSettings
+  UpdatedSettings         map[string]*ProjectSettings
 }
 
 // NewProjectManager returns a new ProjectManager instance
@@ -42,10 +44,12 @@ func NewProjectManager(
     protectedBranchesClient: protectedBranchesClient,
     branchesClient:          branchesClient,
     config:                  config,
+    OriginalSettings:        make(map[string]*ProjectSettings),
+    UpdatedSettings:         make(map[string]*ProjectSettings),
   }
 }
 
-// GetSubgroupID walks the provided path. returning the Group ID of the last desired subgroup.
+// GetSubgroupID walks the provided path, returning the Group ID of the last desired subgroup.
 func (m *ProjectManager) GetSubgroupID(path string, indent int, group_ID int) (int, error) {
   var subgroup_ID int
 
@@ -154,7 +158,9 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
   return repos, nil
 }
 
-// EnsureBranchesAndProtection ensures that 1) the default branch exists and 2) all of the protected branches are configured correctly
+// EnsureBranchesAndProtection ensures that
+//  1) the default branch exists
+//  2) all of the protected branches are configured correctly
 func (m *ProjectManager) EnsureBranchesAndProtection(project Project, dryrun bool) error {
   if err := m.ensureDefaultBranch(project, dryrun); err != nil {
     return err
@@ -222,20 +228,56 @@ func (m *ProjectManager) ensureDefaultBranch(project Project, dryrun bool) error
   return nil
 }
 
-// UpdateProjectSettings updates the project settings on gitlab
-func (m *ProjectManager) UpdateProjectSettings(project Project, dryrun bool) error {
-  m.logger.Debugf("Updating settings of project %s ...", project.FullPath)
+// GetProjectSettings gets the settings in GitLab for the provided project, using
+// the Project API
+// https://docs.gitlab.com/ee/api/projects.html
+func (m *ProjectManager) GetProjectSettings(project Project) (*gitlab.Project, error) {
+  m.logger.Debugf("Get project settings of project %s ...", project.FullPath)
 
+  returned_project, response, err := m.projectsClient.GetProject(project.ID, &gitlab.GetProjectOptions{})
+  if err != nil {
+    return nil, fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+  }
+
+  m.logger.Debugf("---[ HTTP Response ]---\n")
+  m.logger.Debugf("%v\n", response)
+  m.logger.Debugf("---[ Returned Project ]---\n")
+  m.logger.Debugf("%v\n", returned_project)
+
+  return returned_project, nil
+}
+
+// UpdateProjectSettings updates the settings in GitLab for the provided project,
+// using the Project API
+// https://docs.gitlab.com/ee/api/projects.html
+func (m *ProjectManager) UpdateProjectSettings(project Project, dryrun bool) error {
+  m.logger.Debugf("Updating project settings of project %s ...", project.FullPath)
+
+  // Exit if nothing to configure.
   if m.config.ProjectSettings == nil {
     return fmt.Errorf("No project_settings section provided in config")
   }
+
+  // Get current settings states
+  projectSettings, err := m.GetProjectSettings(project)
+  if err != nil {
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+  }
+
+  // Record current settings states
+  params := recordSettingsParams {
+    m.OriginalSettings,
+    project.FullPath,
+    nil,
+    projectSettings,
+  }
+  m.recordSettings(params)
 
   m.logger.Debugf("---[ HTTP Payload ]---\n")
   m.logger.Debugf("%+v\n", m.config.ProjectSettings)
 
   var returned_project *gitlab.Project
   var response *gitlab.Response
-  var err error
   if dryrun {
     m.logger.Infof("DRYRUN: Skipped executing API call [EditProject]")
   } else {
@@ -248,12 +290,44 @@ func (m *ProjectManager) UpdateProjectSettings(project Project, dryrun bool) err
   m.logger.Debugf("%v\n", returned_project)
 
   if err != nil {
-    return fmt.Errorf("failed to update settings of project %s: %v", project.FullPath, err)
+    return fmt.Errorf("failed to update project settings of project %s: %v", project.FullPath, err)
   }
 
-  m.logger.Debugf("Updating settings of project %s done.", project.FullPath)
+  // Get new settings states
+  projectSettings, err = m.GetProjectSettings(project)
+  if err != nil {
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+  }
+
+  // Record new settings states
+  params = recordSettingsParams {
+    m.UpdatedSettings,
+    project.FullPath,
+    nil,
+    projectSettings,
+  }
+  m.recordSettings(params)
+
+  m.logger.Debugf("Updating project settings of project %s done.", project.FullPath)
 
   return nil
+}
+
+// GetProjectMergeRequestSettings identifies the current state of a GitLab projece
+func (m *ProjectManager) GetProjectApprovalSettings(project Project) (*gitlab.ProjectApprovals, error) {
+  m.logger.Debugf("Get merge request approval settings of project %s ...", project.FullPath)
+
+  returned_approval, response, err := m.projectsClient.GetApprovalConfiguration(project.ID)
+  if err != nil {
+    return nil, fmt.Errorf("failed to get current approval settings of project %s: %v", project.FullPath, err)
+  }
+
+  m.logger.Debugf("---[ HTTP Response ]---\n")
+  m.logger.Debugf("%v\n", response)
+  m.logger.Debugf("---[ Returned MR ]---\n")
+  m.logger.Debugf("%v\n", returned_approval)
+
+  return returned_approval, nil
 }
 
 // UpdateProjectMergeRequestSettings updates the project settings on gitlab
@@ -264,12 +338,26 @@ func (m *ProjectManager) UpdateProjectApprovalSettings(project Project, dryrun b
     return fmt.Errorf("No approval_settings section provided in config")
   }
 
+  // Get current settings states
+  approvalSettings, err := m.GetProjectApprovalSettings(project)
+  if err != nil {
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+  }
+
+  // Record current settings states
+  params := recordSettingsParams {
+    m.OriginalSettings,
+    project.FullPath,
+    approvalSettings,
+    nil,
+  }
+  m.recordSettings(params)
+
   m.logger.Debugf("---[ HTTP Payload ]---\n")
   m.logger.Debugf("%+v\n", m.config.ApprovalSettings)
 
   var returned_mr *gitlab.ProjectApprovals
   var response *gitlab.Response
-  var err error
   if dryrun {
     m.logger.Infof("DRYRUN: Skipped executing API call [ChangeApprovalConfiguration]")
   } else {
@@ -285,7 +373,33 @@ func (m *ProjectManager) UpdateProjectApprovalSettings(project Project, dryrun b
     return fmt.Errorf("failed to update merge request approval settings or project %s: %v", project.FullPath, err)
   }
 
+  // Get new settings states
+  approvalSettings, err = m.GetProjectApprovalSettings(project)
+  if err != nil {
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+  }
+
+  // Record new settings states
+  params = recordSettingsParams {
+    m.UpdatedSettings,
+    project.FullPath,
+    approvalSettings,
+    nil,
+  }
+  m.recordSettings(params)
+
   m.logger.Debugf("Updating merge request approval settings of project %s done.", project.FullPath)
+
+  return nil
+}
+
+// ShowProjectSettings displays to console the gathered project settings
+func (m *ProjectManager) ShowProjectSettings(settingMap map[string]*ProjectSettings) error {
+  body, err := json.MarshalIndent(settingMap, "", "  ")
+  if err != nil {
+    panic(err)
+  }
+  fmt.Printf("%s\n", string(body))
 
   return nil
 }
@@ -299,4 +413,30 @@ func (m *ProjectManager) GetError() (bool) {
 func (m *ProjectManager) SetError(state bool) (bool) {
   m.config.Error = state
   return m.config.Error
+}
+
+/* INTERNAL FUNCTIONS */
+
+// recordSettingsParams
+type recordSettingsParams struct {
+  settingMap        map[string]*ProjectSettings
+  fullPath          string
+  approval_settings *gitlab.ProjectApprovals
+  general_settings  *gitlab.Project
+}
+
+// recordSettings create/updates entries in ProjectSettings maps.
+func (m *ProjectManager) recordSettings(params recordSettingsParams) error {
+  if _, ok := params.settingMap[params.fullPath]; !ok {
+    params.settingMap[params.fullPath] = &ProjectSettings{}
+  }
+
+  if params.approval_settings != nil {
+    params.settingMap[params.fullPath].Approval = *params.approval_settings
+  }
+  if params.general_settings != nil {
+    params.settingMap[params.fullPath].General = *params.general_settings
+  }
+
+  return nil
 }

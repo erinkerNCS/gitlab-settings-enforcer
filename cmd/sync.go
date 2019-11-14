@@ -38,7 +38,7 @@ var syncCmd = &cobra.Command{
 
     logger.Infof("Identified %d valid project(s).", len(projects))
     for index, project := range projects {
-      logger.Infof("Updating project #%d: %s", index + 1, project.FullPath)
+      logger.Infof("Processing project #%d: %s", index + 1, project.FullPath)
 
       // Update branches
       if err := manager.EnsureBranchesAndProtection(project, env.Dryrun); err != nil {
@@ -58,6 +58,9 @@ var syncCmd = &cobra.Command{
         manager.SetError(true)
       }
     }
+
+    manager.ShowProjectSettings(manager.OriginalSettings)
+    manager.ShowProjectSettings(manager.UpdatedSettings)
 
     if manager.GetError() {
       logger.Fatal("Error(s) encountered.")
