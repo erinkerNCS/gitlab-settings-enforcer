@@ -6,9 +6,12 @@ import (
   "net/http"
   "net/url"
   "regexp"
+  "sort"
   "strconv"
   "strings"
 
+  "github.com/iancoleman/strcase"
+  "github.com/r3labs/diff"
   "github.com/sirupsen/logrus"
   "github.com/xanzy/go-gitlab"
 
@@ -393,13 +396,75 @@ func (m *ProjectManager) UpdateProjectApprovalSettings(project Project, dryrun b
   return nil
 }
 
-// ShowProjectSettings displays to console the gathered project settings
-func (m *ProjectManager) ShowProjectSettings(settingMap map[string]*ProjectSettings) error {
-  body, err := json.MarshalIndent(settingMap, "", "  ")
+// GenerateChangeLogReport to console the altered project settings
+func (m *ProjectManager) GenerateChangeLogReport() error {
+  // Get differences
+  difflog, err := diff.Diff(m.OriginalSettings, m.UpdatedSettings)
   if err != nil {
     panic(err)
   }
-  fmt.Printf("%s\n", string(body))
+
+  // Convert from per-change to per-path orginzation
+  if len(difflog) != 0 {
+    changelog := make(map[string]map[string]map[string]interface{})
+    for _, v := range difflog {
+      m.logger.Debugf("%v\n", v)
+
+      // If REPO doesn't exist in map, make it.
+      if _, ok := changelog[v.Path[0]]; ! ok {
+        changelog[v.Path[0]] = make(map[string]map[string]interface{})
+      }
+
+      project_name := strcase.ToSnake(v.Path[len(v.Path)-1])
+
+      changelog[v.Path[0]][project_name] = make(map[string]interface{})
+      changelog[v.Path[0]][project_name]["From"] = v.From
+      changelog[v.Path[0]][project_name]["To"] = v.To
+    }
+
+    // Output Raw JSON
+    body, err := json.MarshalIndent(changelog, "", "  ")
+    if err != nil {
+      panic(err)
+    }
+    m.logger.Debugf("%s\n", string(body))
+
+    // Output Formated Report
+    fmt.Printf("\nCHANGE LOG\n")
+
+    // Get longest length of setting name
+    var longest_setting_name int
+    for _, data := range changelog {
+      for setting, _ := range data {
+        if len(setting) > longest_setting_name {
+          longest_setting_name = len(setting)
+        }
+      }
+    }
+
+    var project_names []string
+    for project_name, _ := range changelog {
+      project_names = append(project_names, project_name)
+    }
+    sort.Strings(project_names)
+
+    for _, name := range project_names {
+      fmt.Printf("  %s\n", name)
+
+      var settings []string
+      for setting, _ := range changelog[name] {
+          settings = append(settings, setting)
+      }
+      sort.Strings(settings)
+
+      for _, setting := range settings {
+        fmt.Printf("    %-*s \"%v\" => \"%v\"\n", longest_setting_name+2, setting+":", changelog[name][setting]["From"], changelog[name][setting]["To"])
+      }
+      fmt.Printf("\n")
+    }
+  } else {
+    m.logger.Debugf("No changes discovered.")
+  }
 
   return nil
 }

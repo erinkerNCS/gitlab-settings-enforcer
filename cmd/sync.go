@@ -59,8 +59,10 @@ var syncCmd = &cobra.Command{
       }
     }
 
-    manager.ShowProjectSettings(manager.OriginalSettings)
-    manager.ShowProjectSettings(manager.UpdatedSettings)
+    if err := manager.GenerateChangeLogReport(); err != nil {
+      logger.Errorf("failed to create changelog report: %v", err)
+      manager.SetError(true)
+    }
 
     if manager.GetError() {
       logger.Fatal("Error(s) encountered.")
