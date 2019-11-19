@@ -507,13 +507,21 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
   m.logger.Debugf("Generate Change Log Report")
 
   m.logger.Debugf("---[ ORIGINAL APPROVAL SETTINGS ]---")
-  m.debugPrintApprovalSettings(m.ApprovalSettingsOriginal)
+  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsOriginal); err != nil {
+    m.logger.Debugf("Error printing Original Approval Settings")
+  }
   m.logger.Debugf("---[ UPDATED APPROVAL SETTINGS ]---")
-  m.debugPrintApprovalSettings(m.ApprovalSettingsUpdated)
+  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsUpdated); err != nil {
+    m.logger.Debugf("Error printing Updated Approval Settings")
+  }
   m.logger.Debugf("---[ ORIGINAL PROJECT SETTINGS ]---")
-  m.debugPrintProjectSettings(m.ProjectSettingsOriginal)
+  if err := m.debugPrintProjectSettings(m.ProjectSettingsOriginal); err != nil {
+    m.logger.Debugf("Error printing Original Project Settings")
+  }
   m.logger.Debugf("---[ UPDATED PROJECT SETTINGS ]---")
-  m.debugPrintProjectSettings(m.ProjectSettingsUpdated)
+  if err := m.debugPrintProjectSettings(m.ProjectSettingsUpdated); err != nil {
+    m.logger.Debugf("Error printing Updated Project Settings")
+  }
 
   // Convert from per-change to per-path orginzation
   if len(m.ApprovalSettingsUpdated) != 0 || len(m.ProjectSettingsUpdated) != 0 {
@@ -584,7 +592,7 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
       project_names = append(project_names, project_name)
 
       for _, data := range subsections {
-        for setting, _ := range data {
+        for setting := range data {
           if len(setting) > longest_setting_name {
             longest_setting_name = len(setting)
           }
@@ -601,14 +609,14 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
         fmt.Printf("  %s\n", name)
 
         var subsections []string
-        for subsection, _ := range changelog[name] {
+        for subsection := range changelog[name] {
           subsections = append(subsections, subsection)
         }
         sort.Strings(subsections)
 
         for _, subsection := range subsections {
           var settings []string
-          for setting, _ := range changelog[name][subsection] {
+          for setting := range changelog[name][subsection] {
             settings = append(settings, setting)
           }
           sort.Strings(settings)
