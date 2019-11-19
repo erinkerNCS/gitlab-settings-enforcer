@@ -21,14 +21,16 @@ import (
 
 // ProjectManager fetches a list of repositories from GitLab
 type ProjectManager struct {
-  logger                  *logrus.Entry
-  groupsClient            groupsClient
-  projectsClient          projectsClient
-  protectedBranchesClient protectedBranchesClient
-  branchesClient          branchesClient
-  config                  *config.Config
-  OriginalSettings        map[string]*ProjectSettings
-  UpdatedSettings         map[string]*ProjectSettings
+  logger                   *logrus.Entry
+  groupsClient             groupsClient
+  projectsClient           projectsClient
+  protectedBranchesClient  protectedBranchesClient
+  branchesClient           branchesClient
+  config                   *config.Config
+  ApprovalSettingsOriginal map[string]*gitlab.ProjectApprovals
+  ApprovalSettingsUpdated  map[string]*gitlab.ProjectApprovals
+  ProjectSettingsOriginal  map[string]*gitlab.Project
+  ProjectSettingsUpdated   map[string]*gitlab.Project
 }
 
 // NewProjectManager returns a new ProjectManager instance
@@ -41,14 +43,16 @@ func NewProjectManager(
   config *config.Config,
 ) *ProjectManager {
   return &ProjectManager{
-    logger:                  logger,
-    groupsClient:            groupsClient,
-    projectsClient:          projectsClient,
-    protectedBranchesClient: protectedBranchesClient,
-    branchesClient:          branchesClient,
-    config:                  config,
-    OriginalSettings:        make(map[string]*ProjectSettings),
-    UpdatedSettings:         make(map[string]*ProjectSettings),
+    logger:                   logger,
+    groupsClient:             groupsClient,
+    projectsClient:           projectsClient,
+    protectedBranchesClient:  protectedBranchesClient,
+    branchesClient:           branchesClient,
+    config:                   config,
+    ApprovalSettingsOriginal: make(map[string]*gitlab.ProjectApprovals),
+    ApprovalSettingsUpdated:  make(map[string]*gitlab.ProjectApprovals),
+    ProjectSettingsOriginal:  make(map[string]*gitlab.Project),
+    ProjectSettingsUpdated:   make(map[string]*gitlab.Project),
   }
 }
 
@@ -95,8 +99,8 @@ func (m *ProjectManager) GetSubgroupID(path string, indent int, group_ID int) (i
 }
 
 // GetProjects fetches a list of accessible repos within the groups set in config file
-func (m *ProjectManager) GetProjects() ([]Project, error) {
-  var repos []Project
+func (m *ProjectManager) GetProjects() ([]gitlab.Project, error) {
+  var repos []gitlab.Project
 
   m.logger.Debugf("Fetching projects under %s path ...", m.config.GroupName)
 
@@ -108,7 +112,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
     // Nested Path
     group_ID, err := m.GetSubgroupID(m.config.GroupName, 1, 0)
     if err != nil {
-      return []Project{}, fmt.Errorf("failed to fetch GitLab group info for %q: %v", m.config.GroupName, err)
+      return []gitlab.Project{}, fmt.Errorf("failed to fetch GitLab group info for %q: %v", m.config.GroupName, err)
     }
     groupID = group_ID
   } else {
@@ -116,7 +120,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
     var group_name string = strings.Replace(url.PathEscape(m.config.GroupName), ".", "%2E", -1)
     group, _, err := m.groupsClient.GetGroup(group_name)
     if err != nil {
-      return []Project{}, fmt.Errorf("failed to fetch GitLab group info for %q: %v", group_name, err)
+      return []gitlab.Project{}, fmt.Errorf("failed to fetch GitLab group info for %q: %v", group_name, err)
     }
     groupID = group.ID
   }
@@ -127,7 +131,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
   for {
     projects, resp, err := m.groupsClient.ListGroupProjects(groupID, listGroupProjectOps, addIncludeSubgroups)
     if err != nil {
-      return []Project{}, fmt.Errorf("failed to fetch GitLab projects for %s [%d]: %v", m.config.GroupName, groupID, err)
+      return []gitlab.Project{}, fmt.Errorf("failed to fetch GitLab projects for %s [%d]: %v", m.config.GroupName, groupID, err)
     }
 
     for _, p := range projects {
@@ -140,11 +144,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
         continue
       }
 
-      repos = append(repos, Project{
-        ID:       p.ID,
-        Name:     p.Name,
-        FullPath: p.PathWithNamespace,
-      })
+      repos = append(repos, *p)
     }
 
     // Exit the loop when we've seen all pages.
@@ -164,7 +164,7 @@ func (m *ProjectManager) GetProjects() ([]Project, error) {
 // EnsureBranchesAndProtection ensures that
 //  1) the default branch exists
 //  2) all of the protected branches are configured correctly
-func (m *ProjectManager) EnsureBranchesAndProtection(project Project, dryrun bool) error {
+func (m *ProjectManager) EnsureBranchesAndProtection(project gitlab.Project, dryrun bool) error {
   if err := m.ensureDefaultBranch(project, dryrun); err != nil {
     return err
   }
@@ -196,7 +196,7 @@ func (m *ProjectManager) EnsureBranchesAndProtection(project Project, dryrun boo
   return nil
 }
 
-func (m *ProjectManager) ensureDefaultBranch(project Project, dryrun bool) error {
+func (m *ProjectManager) ensureDefaultBranch(project gitlab.Project, dryrun bool) error {
   if !m.config.CreateDefaultBranch ||
     m.config.ProjectSettings.DefaultBranch == nil ||
     *m.config.ProjectSettings.DefaultBranch == "master" {
@@ -234,12 +234,12 @@ func (m *ProjectManager) ensureDefaultBranch(project Project, dryrun bool) error
 // GetProjectSettings gets the settings in GitLab for the provided project, using
 // the Project API
 // https://docs.gitlab.com/ee/api/projects.html
-func (m *ProjectManager) GetProjectSettings(project Project) (*gitlab.Project, error) {
-  m.logger.Debugf("Get project settings of project %s ...", project.FullPath)
+func (m *ProjectManager) GetProjectSettings(project gitlab.Project) (*gitlab.Project, error) {
+  m.logger.Debugf("Get project settings of project %s ...", project.PathWithNamespace)
 
   returned_project, response, err := m.projectsClient.GetProject(project.ID, &gitlab.GetProjectOptions{})
   if err != nil {
-    return nil, fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+    return nil, fmt.Errorf("failed to get current project settings of project %s: %v", project.PathWithNamespace, err)
   }
 
   m.logger.Debugf("---[ HTTP Response ]---\n")
@@ -253,31 +253,40 @@ func (m *ProjectManager) GetProjectSettings(project Project) (*gitlab.Project, e
 // UpdateProjectSettings updates the settings in GitLab for the provided project,
 // using the Project API
 // https://docs.gitlab.com/ee/api/projects.html
-func (m *ProjectManager) UpdateProjectSettings(project Project, dryrun bool) error {
-  m.logger.Debugf("Updating project settings of project %s ...", project.FullPath)
+func (m *ProjectManager) UpdateProjectSettings(project gitlab.Project, dryrun bool) error {
+  m.logger.Debugf("Updating project settings of project %s ...", project.PathWithNamespace)
 
   // Exit if nothing to configure.
   if m.config.ProjectSettings == nil {
-    return fmt.Errorf("No project_settings section provided in config")
+    m.logger.Debugf("No project_settings section provided in config")
+    return nil
   }
 
   // Get current settings states
   projectSettings, err := m.GetProjectSettings(project)
   if err != nil {
-    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.PathWithNamespace, err)
   }
 
   // Record current settings states
-  params := recordSettingsParams {
-    m.OriginalSettings,
-    project.FullPath,
-    nil,
-    projectSettings,
-  }
-  m.recordSettings(params)
+  m.ProjectSettingsOriginal[project.PathWithNamespace] = projectSettings
 
-  m.logger.Debugf("---[ HTTP Payload ]---\n")
+  m.logger.Debugf("---[ HTTP Payload for UpdateProjectSettings ]---\n")
   m.logger.Debugf("%+v\n", m.config.ProjectSettings)
+
+  settingsToChange, err := m.convertEditProjectOptionsToProject(*m.config.ProjectSettings)
+  if err != nil {
+    return err
+  }
+
+  if ! m.willChangeProjectSettings(projectSettings, &settingsToChange) {
+    m.logger.Debugf("No action required.")
+
+    // Record current settings states
+    m.ProjectSettingsUpdated[project.PathWithNamespace] = projectSettings
+
+    return nil
+  }
 
   var returned_project *gitlab.Project
   var response *gitlab.Response
@@ -287,77 +296,81 @@ func (m *ProjectManager) UpdateProjectSettings(project Project, dryrun bool) err
     returned_project, response, err = m.projectsClient.EditProject(project.ID, m.config.ProjectSettings)
   }
 
-  m.logger.Debugf("---[ HTTP Response ]---\n")
+  m.logger.Debugf("---[ HTTP Response for UpdateProjectSettings ]---\n")
   m.logger.Debugf("%v\n", response)
-  m.logger.Debugf("---[ Returned Project ]---\n")
+  m.logger.Debugf("---[ Returned Project for UpdateProjectSettings ]---\n")
   m.logger.Debugf("%v\n", returned_project)
 
   if err != nil {
-    return fmt.Errorf("failed to update project settings of project %s: %v", project.FullPath, err)
+    return fmt.Errorf("failed to update project settings of project %s: %v", project.PathWithNamespace, err)
   }
 
   // Get new settings states
   projectSettings, err = m.GetProjectSettings(project)
   if err != nil {
-    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.PathWithNamespace, err)
   }
 
-  // Record new settings states
-  params = recordSettingsParams {
-    m.UpdatedSettings,
-    project.FullPath,
-    nil,
-    projectSettings,
-  }
-  m.recordSettings(params)
+  // Record current settings states
+  m.ProjectSettingsUpdated[project.PathWithNamespace] = projectSettings
 
-  m.logger.Debugf("Updating project settings of project %s done.", project.FullPath)
+  m.logger.Debugf("Updating project settings of project %s done.", project.PathWithNamespace)
 
   return nil
 }
 
 // GetProjectMergeRequestSettings identifies the current state of a GitLab projece
-func (m *ProjectManager) GetProjectApprovalSettings(project Project) (*gitlab.ProjectApprovals, error) {
-  m.logger.Debugf("Get merge request approval settings of project %s ...", project.FullPath)
+func (m *ProjectManager) GetProjectApprovalSettings(project gitlab.Project) (*gitlab.ProjectApprovals, error) {
+  m.logger.Debugf("Get merge request approval settings of project %s ...", project.PathWithNamespace)
 
   returned_approval, response, err := m.projectsClient.GetApprovalConfiguration(project.ID)
   if err != nil {
-    return nil, fmt.Errorf("failed to get current approval settings of project %s: %v", project.FullPath, err)
+    return nil, fmt.Errorf("failed to get current approval settings of project %s: %v", project.PathWithNamespace, err)
   }
 
-  m.logger.Debugf("---[ HTTP Response ]---\n")
+  m.logger.Debugf("---[ HTTP Response for GetProjectApprovalSettings ]---\n")
   m.logger.Debugf("%v\n", response)
-  m.logger.Debugf("---[ Returned MR ]---\n")
+  m.logger.Debugf("---[ Returned MR for GetProjectApprovalSettings ]---\n")
   m.logger.Debugf("%v\n", returned_approval)
 
   return returned_approval, nil
 }
 
 // UpdateProjectMergeRequestSettings updates the project settings on gitlab
-func (m *ProjectManager) UpdateProjectApprovalSettings(project Project, dryrun bool) error {
-  m.logger.Debugf("Updating merge request approval settings of project %s [%d]...", project.FullPath, project.ID)
+func (m *ProjectManager) UpdateProjectApprovalSettings(project gitlab.Project, dryrun bool) error {
+  m.logger.Debugf("Updating merge request approval settings of project %s [%d]...", project.PathWithNamespace, project.ID)
 
+  // Exit if nothing to configure
   if m.config.ApprovalSettings == nil {
-    return fmt.Errorf("No approval_settings section provided in config")
+    m.logger.Debugf("No approval_settings section provided in config")
+    return nil
   }
 
   // Get current settings states
   approvalSettings, err := m.GetProjectApprovalSettings(project)
   if err != nil {
-    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.PathWithNamespace, err)
   }
 
   // Record current settings states
-  params := recordSettingsParams {
-    m.OriginalSettings,
-    project.FullPath,
-    approvalSettings,
-    nil,
-  }
-  m.recordSettings(params)
+  m.ApprovalSettingsOriginal[project.PathWithNamespace] = approvalSettings
 
-  m.logger.Debugf("---[ HTTP Payload ]---\n")
+  m.logger.Debugf("---[ HTTP Payload for UpdateProjectApprovalSettings ]---\n")
   m.logger.Debugf("%+v\n", m.config.ApprovalSettings)
+
+  settingsToChange, err := m.convertChangeApprovalConfigurationOptionsToProjectApprovals(*m.config.ApprovalSettings)
+  if err != nil {
+    return err
+  }
+
+  if ! m.willChangeApprovalSettings(approvalSettings, &settingsToChange) {
+    m.logger.Debugf("No action required.")
+
+    // Record current settings states
+    m.ApprovalSettingsUpdated[project.PathWithNamespace] = approvalSettings
+
+    return nil
+  }
 
   var returned_mr *gitlab.ProjectApprovals
   var response *gitlab.Response
@@ -367,104 +380,25 @@ func (m *ProjectManager) UpdateProjectApprovalSettings(project Project, dryrun b
     returned_mr, response, err = m.projectsClient.ChangeApprovalConfiguration(project.ID, m.config.ApprovalSettings)
   }
 
-  m.logger.Debugf("---[ HTTP Response ]---\n")
+  m.logger.Debugf("---[ HTTP Response for UpdateProjectApprovalSettings ]---\n")
   m.logger.Debugf("%v\n", response)
-  m.logger.Debugf("---[ Returned MR ]---\n")
+  m.logger.Debugf("---[ Returned MR for UpdateProjectApprovalSettings ]---\n")
   m.logger.Debugf("%v\n", returned_mr)
 
   if err != nil {
-    return fmt.Errorf("failed to update merge request approval settings or project %s: %v", project.FullPath, err)
+    return fmt.Errorf("failed to update merge request approval settings or project %s: %v", project.PathWithNamespace, err)
   }
 
   // Get new settings states
   approvalSettings, err = m.GetProjectApprovalSettings(project)
   if err != nil {
-    return fmt.Errorf("failed to get current project settings of project %s: %v", project.FullPath, err)
+    return fmt.Errorf("failed to get current project settings of project %s: %v", project.PathWithNamespace, err)
   }
 
-  // Record new settings states
-  params = recordSettingsParams {
-    m.UpdatedSettings,
-    project.FullPath,
-    approvalSettings,
-    nil,
-  }
-  m.recordSettings(params)
+  // Record current settings states
+  m.ApprovalSettingsUpdated[project.PathWithNamespace] = approvalSettings
 
-  m.logger.Debugf("Updating merge request approval settings of project %s done.", project.FullPath)
-
-  return nil
-}
-
-// GenerateChangeLogReport to console the altered project settings
-func (m *ProjectManager) GenerateChangeLogReport() error {
-  // Get differences
-  difflog, err := diff.Diff(m.OriginalSettings, m.UpdatedSettings)
-  if err != nil {
-    panic(err)
-  }
-
-  // Convert from per-change to per-path orginzation
-  if len(difflog) != 0 {
-    changelog := make(map[string]map[string]map[string]interface{})
-    for _, v := range difflog {
-      m.logger.Debugf("%v\n", v)
-
-      // If REPO doesn't exist in map, make it.
-      if _, ok := changelog[v.Path[0]]; ! ok {
-        changelog[v.Path[0]] = make(map[string]map[string]interface{})
-      }
-
-      project_name := strcase.ToSnake(v.Path[len(v.Path)-1])
-
-      changelog[v.Path[0]][project_name] = make(map[string]interface{})
-      changelog[v.Path[0]][project_name]["From"] = v.From
-      changelog[v.Path[0]][project_name]["To"] = v.To
-    }
-
-    // Output Raw JSON
-    body, err := json.MarshalIndent(changelog, "", "  ")
-    if err != nil {
-      panic(err)
-    }
-    m.logger.Debugf("%s\n", string(body))
-
-    // Output Formated Report
-    fmt.Printf("\nCHANGE LOG\n")
-
-    // Get longest length of setting name
-    var longest_setting_name int
-    for _, data := range changelog {
-      for setting, _ := range data {
-        if len(setting) > longest_setting_name {
-          longest_setting_name = len(setting)
-        }
-      }
-    }
-
-    var project_names []string
-    for project_name, _ := range changelog {
-      project_names = append(project_names, project_name)
-    }
-    sort.Strings(project_names)
-
-    for _, name := range project_names {
-      fmt.Printf("  %s\n", name)
-
-      var settings []string
-      for setting, _ := range changelog[name] {
-          settings = append(settings, setting)
-      }
-      sort.Strings(settings)
-
-      for _, setting := range settings {
-        fmt.Printf("    %-*s \"%v\" => \"%v\"\n", longest_setting_name+2, setting+":", changelog[name][setting]["From"], changelog[name][setting]["To"])
-      }
-      fmt.Printf("\n")
-    }
-  } else {
-    m.logger.Debugf("No changes discovered.")
-  }
+  m.logger.Debugf("Updating merge request approval settings of project %s done.", project.PathWithNamespace)
 
   return nil
 }
@@ -480,27 +414,218 @@ func (m *ProjectManager) SetError(state bool) (bool) {
   return m.config.Error
 }
 
-/* INTERNAL FUNCTIONS */
+// convertChangeApprovalConfigurationOptionsToProjectApprovals
+func (m *ProjectManager) convertChangeApprovalConfigurationOptionsToProjectApprovals(current gitlab.ChangeApprovalConfigurationOptions) (gitlab.ProjectApprovals, error) {
+  jsonData, err := json.Marshal(current)
+  if err != nil {
+    return gitlab.ProjectApprovals{}, fmt.Errorf("failed to convert ChangeApprovalConfigurationOptions to json: %v", err)
+  }
 
-// recordSettingsParams
-type recordSettingsParams struct {
-  settingMap        map[string]*ProjectSettings
-  fullPath          string
-  approval_settings *gitlab.ProjectApprovals
-  general_settings  *gitlab.Project
+  var returnValue gitlab.ProjectApprovals
+  err = json.Unmarshal(jsonData, &returnValue)
+  if err != nil {
+    return gitlab.ProjectApprovals{}, fmt.Errorf("failed to convert json to ProjectApproval struct: %v", err)
+  }
+
+  return returnValue, nil
 }
 
-// recordSettings create/updates entries in ProjectSettings maps.
-func (m *ProjectManager) recordSettings(params recordSettingsParams) error {
-  if _, ok := params.settingMap[params.fullPath]; !ok {
-    params.settingMap[params.fullPath] = &ProjectSettings{}
+// convertEditProjectOptionsToProject
+func (m *ProjectManager) convertEditProjectOptionsToProject(current gitlab.EditProjectOptions) (gitlab.Project, error) {
+  jsonData, err := json.Marshal(current)
+  if err != nil {
+    return gitlab.Project{}, fmt.Errorf("failed to convert ChangeApprovalConfigurationOptions to json: %v", err)
   }
 
-  if params.approval_settings != nil {
-    params.settingMap[params.fullPath].Approval = *params.approval_settings
+  var returnValue gitlab.Project
+  err = json.Unmarshal(jsonData, &returnValue)
+  if err != nil {
+    return gitlab.Project{}, fmt.Errorf("failed to convert json to Project struct: %v", err)
   }
-  if params.general_settings != nil {
-    params.settingMap[params.fullPath].General = *params.general_settings
+
+  return returnValue, nil
+}
+
+// willChangeApprovalSettings takes two ProjectSettings, and confirms if the 2nd one changes the 1st
+func (m *ProjectManager) willChangeApprovalSettings(current *gitlab.ProjectApprovals, changes *gitlab.ProjectApprovals) bool {
+  changelog, _ := diff.Diff(current, changes)
+
+  changeExpected := false
+  fmt.Printf("%v\n", changelog)
+
+  for _, change := range changelog {
+    if change.Type == "update" {
+      changeExpected = true
+    }
+  }
+
+  return changeExpected
+}
+
+// willChangeProjectSettings takes two ProjectSettings, and confirms if the 2nd one changes the 1st
+func (m *ProjectManager) willChangeProjectSettings(current *gitlab.Project, changes *gitlab.Project) bool {
+  changelog, _ := diff.Diff(current, changes)
+
+  changeExpected := false
+  fmt.Printf("%v\n", changelog)
+
+  for _, change := range changelog {
+    if change.Type == "update" {
+      changeExpected = true
+    }
+  }
+
+  return changeExpected
+}
+
+// debugPrintProjectSettings prints to console a SettingsMap
+func (m *ProjectManager) debugPrintApprovalSettings(settings map[string]*gitlab.ProjectApprovals) error {
+  jsonData, err := json.MarshalIndent(settings, "", "  ")
+  if err != nil {
+    return fmt.Errorf("failed to convert SettingsMap to JSON: %v", err)
+  }
+
+  m.logger.Debugf(string(jsonData))
+
+  return nil
+}
+
+// debugPrintProjectSettings prints to console a SettingsMap
+func (m *ProjectManager) debugPrintProjectSettings(settings map[string]*gitlab.Project) error {
+  jsonData, err := json.MarshalIndent(settings, "", "  ")
+  if err != nil {
+    return fmt.Errorf("failed to convert SettingsMap to JSON: %v", err)
+  }
+
+  m.logger.Debugf(string(jsonData))
+
+  return nil
+}
+
+// GenerateChangeLogReport to console the altered project settings
+func (m *ProjectManager) GenerateChangeLogReport() error {
+  m.logger.Debugf("Generate Change Log Report")
+
+  m.logger.Debugf("---[ ORIGINAL APPROVAL SETTINGS ]---")
+  m.debugPrintApprovalSettings(m.ApprovalSettingsOriginal)
+  m.logger.Debugf("---[ UPDATED APPROVAL SETTINGS ]---")
+  m.debugPrintApprovalSettings(m.ApprovalSettingsUpdated)
+  m.logger.Debugf("---[ ORIGINAL PROJECT SETTINGS ]---")
+  m.debugPrintProjectSettings(m.ProjectSettingsOriginal)
+  m.logger.Debugf("---[ UPDATED PROJECT SETTINGS ]---")
+  m.debugPrintProjectSettings(m.ProjectSettingsUpdated)
+
+  // Convert from per-change to per-path orginzation
+  if len(m.ApprovalSettingsUpdated) != 0 || len(m.ProjectSettingsUpdated) != 0 {
+    // Get differences
+    approvalDifflog, err := diff.Diff(m.ApprovalSettingsOriginal, m.ApprovalSettingsUpdated)
+    if err != nil {
+      panic(err)
+    }
+    projectDifflog, err := diff.Diff(m.ProjectSettingsOriginal, m.ProjectSettingsUpdated)
+    if err != nil {
+      panic(err)
+    }
+
+    m.logger.Debugf("---[ Approval Diff Log ]---")
+    m.logger.Debugf("%+v\n", approvalDifflog)
+    m.logger.Debugf("---[ Project Diff Log ]---")
+    m.logger.Debugf("%+v\n", projectDifflog)
+
+    changelog := make(map[string]map[string]map[string]map[string]interface{})
+
+    // Process Approvals
+    m.logger.Debugf("Process Approval Diff Log")
+    for _, v := range approvalDifflog {
+      // If REPO doesn't exist in map, make it.
+      if _, ok := changelog[v.Path[0]]; ! ok {
+        changelog[v.Path[0]] = make(map[string]map[string]map[string]interface{})
+      }
+      if _, ok := changelog[v.Path[0]]["approval_settings"]; ! ok {
+        changelog[v.Path[0]]["approval_settings"] = make(map[string]map[string]interface{})
+      }
+
+      setting_name := strcase.ToSnake(v.Path[len(v.Path)-1])
+      changelog[v.Path[0]]["approval_settings"][setting_name] = make(map[string]interface{})
+      changelog[v.Path[0]]["approval_settings"][setting_name]["From"] = v.From
+      changelog[v.Path[0]]["approval_settings"][setting_name]["To"] = v.To
+    }
+
+    // Process Projects
+    m.logger.Debugf("Process Project Diff Log")
+    for _, v := range projectDifflog {
+      // If REPO doesn't exist in map, make it.
+      if _, ok := changelog[v.Path[0]]; ! ok {
+        changelog[v.Path[0]] = make(map[string]map[string]map[string]interface{})
+      }
+      if _, ok := changelog[v.Path[0]]["project_settings"]; ! ok {
+        changelog[v.Path[0]]["project_settings"] = make(map[string]map[string]interface{})
+      }
+
+      setting_name := strcase.ToSnake(v.Path[len(v.Path)-1])
+      changelog[v.Path[0]]["project_settings"][setting_name] = make(map[string]interface{})
+      changelog[v.Path[0]]["project_settings"][setting_name]["From"] = v.From
+      changelog[v.Path[0]]["project_settings"][setting_name]["To"] = v.To
+    }
+
+    // Output Raw JSON
+    body, err := json.MarshalIndent(changelog, "", "  ")
+    if err != nil {
+      panic(err)
+    }
+    m.logger.Debugf("---[ Change Log (JSON) ]---")
+    m.logger.Debugf("%s\n", string(body))
+
+    // Get longest length of setting name
+    var longest_setting_name int
+    var project_names []string
+    for project_name, subsections := range changelog {
+      // Add to list of project names to allow sorting
+      project_names = append(project_names, project_name)
+
+      for _, data := range subsections {
+        for setting, _ := range data {
+          if len(setting) > longest_setting_name {
+            longest_setting_name = len(setting)
+          }
+        }
+      }
+    }
+    sort.Strings(project_names)
+
+    if len(changelog) != 0 {
+      // Output Formated Report
+      fmt.Printf("\nCHANGE LOG\n")
+
+      for _, name := range project_names {
+        fmt.Printf("  %s\n", name)
+
+        var subsections []string
+        for subsection, _ := range changelog[name] {
+          subsections = append(subsections, subsection)
+        }
+        sort.Strings(subsections)
+
+        for _, subsection := range subsections {
+          var settings []string
+          for setting, _ := range changelog[name][subsection] {
+            settings = append(settings, setting)
+          }
+          sort.Strings(settings)
+
+          for _, setting := range settings {
+            fmt.Printf("    %-*s", longest_setting_name+2, setting+":")
+            fmt.Printf("\"%v\" => \"%v\"\n", changelog[name][subsection][setting]["From"], changelog[name][subsection][setting]["To"])
+          }
+        }
+
+        fmt.Printf("\n")
+      }
+    } else {
+      fmt.Printf("\nNo changes discovered.\n")
+    }
+  } else {
+    fmt.Printf("\nNo changes discovered.\n")
   }
 
   return nil

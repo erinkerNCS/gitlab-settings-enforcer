@@ -6,13 +6,6 @@ import (
   gitlab "github.com/xanzy/go-gitlab"
 )
 
-// Project holds all relevant infos for a GitLab repo
-type Project struct {
-  ID       int
-  Name     string
-  FullPath string
-}
-
 // currentState stores current Project state for each project interacted with
 type ProjectSettings struct {
   Approval gitlab.ProjectApprovals `json:"approval_settings,omitempty"`
