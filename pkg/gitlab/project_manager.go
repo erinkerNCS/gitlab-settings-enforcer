@@ -121,67 +121,66 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
     m.logger.Debugf("Error printing Updated Project Settings")
   }
 
-  // Convert from per-change to per-path orginzation
-  if len(m.ApprovalSettingsUpdated) != 0 || len(m.ProjectSettingsUpdated) != 0 {
-    // Get differences
-    approvalDifflog, err := diff.Diff(m.ApprovalSettingsOriginal, m.ApprovalSettingsUpdated)
-    if err != nil {
-      panic(err)
+  // Get differences
+  approvalDifflog, err := diff.Diff(m.ApprovalSettingsOriginal, m.ApprovalSettingsUpdated)
+  if err != nil {
+    panic(err)
+  }
+  projectDifflog, err := diff.Diff(m.ProjectSettingsOriginal, m.ProjectSettingsUpdated)
+  if err != nil {
+    panic(err)
+  }
+
+  m.logger.Debugf("---[ Approval Diff Log ]---")
+  m.logger.Debugf("%+v\n", approvalDifflog)
+  m.logger.Debugf("---[ Project Diff Log ]---")
+  m.logger.Debugf("%+v\n", projectDifflog)
+
+  changelog := make(map[string]map[string]map[string]map[string]interface{})
+
+  // Process Approvals
+  m.logger.Debugf("Process Approval Diff Log")
+  for _, v := range approvalDifflog {
+    // If REPO doesn't exist in map, make it.
+    if _, ok := changelog[v.Path[0]]; ! ok {
+      changelog[v.Path[0]] = make(map[string]map[string]map[string]interface{})
     }
-    projectDifflog, err := diff.Diff(m.ProjectSettingsOriginal, m.ProjectSettingsUpdated)
-    if err != nil {
-      panic(err)
-    }
-
-    m.logger.Debugf("---[ Approval Diff Log ]---")
-    m.logger.Debugf("%+v\n", approvalDifflog)
-    m.logger.Debugf("---[ Project Diff Log ]---")
-    m.logger.Debugf("%+v\n", projectDifflog)
-
-    changelog := make(map[string]map[string]map[string]map[string]interface{})
-
-    // Process Approvals
-    m.logger.Debugf("Process Approval Diff Log")
-    for _, v := range approvalDifflog {
-      // If REPO doesn't exist in map, make it.
-      if _, ok := changelog[v.Path[0]]; ! ok {
-        changelog[v.Path[0]] = make(map[string]map[string]map[string]interface{})
-      }
-      if _, ok := changelog[v.Path[0]]["approval_settings"]; ! ok {
-        changelog[v.Path[0]]["approval_settings"] = make(map[string]map[string]interface{})
-      }
-
-      setting_name := strcase.ToSnake(v.Path[len(v.Path)-1])
-      changelog[v.Path[0]]["approval_settings"][setting_name] = make(map[string]interface{})
-      changelog[v.Path[0]]["approval_settings"][setting_name]["From"] = v.From
-      changelog[v.Path[0]]["approval_settings"][setting_name]["To"] = v.To
+    if _, ok := changelog[v.Path[0]]["approval_settings"]; ! ok {
+      changelog[v.Path[0]]["approval_settings"] = make(map[string]map[string]interface{})
     }
 
-    // Process Projects
-    m.logger.Debugf("Process Project Diff Log")
-    for _, v := range projectDifflog {
-      // If REPO doesn't exist in map, make it.
-      if _, ok := changelog[v.Path[0]]; ! ok {
-        changelog[v.Path[0]] = make(map[string]map[string]map[string]interface{})
-      }
-      if _, ok := changelog[v.Path[0]]["project_settings"]; ! ok {
-        changelog[v.Path[0]]["project_settings"] = make(map[string]map[string]interface{})
-      }
+    setting_name := strcase.ToSnake(v.Path[len(v.Path)-1])
+    changelog[v.Path[0]]["approval_settings"][setting_name] = make(map[string]interface{})
+    changelog[v.Path[0]]["approval_settings"][setting_name]["From"] = v.From
+    changelog[v.Path[0]]["approval_settings"][setting_name]["To"] = v.To
+  }
 
-      setting_name := strcase.ToSnake(v.Path[len(v.Path)-1])
-      changelog[v.Path[0]]["project_settings"][setting_name] = make(map[string]interface{})
-      changelog[v.Path[0]]["project_settings"][setting_name]["From"] = v.From
-      changelog[v.Path[0]]["project_settings"][setting_name]["To"] = v.To
+  // Process Projects
+  m.logger.Debugf("Process Project Diff Log")
+  for _, v := range projectDifflog {
+    // If REPO doesn't exist in map, make it.
+    if _, ok := changelog[v.Path[0]]; ! ok {
+      changelog[v.Path[0]] = make(map[string]map[string]map[string]interface{})
+    }
+    if _, ok := changelog[v.Path[0]]["project_settings"]; ! ok {
+      changelog[v.Path[0]]["project_settings"] = make(map[string]map[string]interface{})
     }
 
-    // Output Raw JSON
-    body, err := json.MarshalIndent(changelog, "", "  ")
-    if err != nil {
-      panic(err)
-    }
-    m.logger.Debugf("---[ Change Log (JSON) ]---")
-    m.logger.Debugf("%s\n", string(body))
+    setting_name := strcase.ToSnake(v.Path[len(v.Path)-1])
+    changelog[v.Path[0]]["project_settings"][setting_name] = make(map[string]interface{})
+    changelog[v.Path[0]]["project_settings"][setting_name]["From"] = v.From
+    changelog[v.Path[0]]["project_settings"][setting_name]["To"] = v.To
+  }
 
+  // Output Raw JSON
+  body, err := json.MarshalIndent(changelog, "", "  ")
+  if err != nil {
+    panic(err)
+  }
+  m.logger.Debugf("---[ Change Log (JSON) ]---")
+  m.logger.Debugf("%s\n", string(body))
+
+  if len(changelog) != 0 {
     // Get longest length of setting name
     var longest_setting_name int
     var project_names []string
@@ -199,36 +198,32 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
     }
     sort.Strings(project_names)
 
-    if len(changelog) != 0 {
-      // Output Formated Report
-      fmt.Printf("\nCHANGE LOG\n")
+    // Output Formated Report
+    fmt.Printf("\nCHANGE LOG\n")
 
-      for _, name := range project_names {
-        fmt.Printf("  %s\n", name)
+    for _, name := range project_names {
+      fmt.Printf("  %s\n", name)
 
-        var subsections []string
-        for subsection := range changelog[name] {
-          subsections = append(subsections, subsection)
-        }
-        sort.Strings(subsections)
-
-        for _, subsection := range subsections {
-          var settings []string
-          for setting := range changelog[name][subsection] {
-            settings = append(settings, setting)
-          }
-          sort.Strings(settings)
-
-          for _, setting := range settings {
-            fmt.Printf("    %-*s", longest_setting_name+2, setting+":")
-            fmt.Printf("\"%v\" => \"%v\"\n", changelog[name][subsection][setting]["From"], changelog[name][subsection][setting]["To"])
-          }
-        }
-
-        fmt.Printf("\n")
+      var subsections []string
+      for subsection := range changelog[name] {
+        subsections = append(subsections, subsection)
       }
-    } else {
-      fmt.Printf("\nNo changes discovered.\n")
+      sort.Strings(subsections)
+
+      for _, subsection := range subsections {
+        var settings []string
+        for setting := range changelog[name][subsection] {
+          settings = append(settings, setting)
+        }
+        sort.Strings(settings)
+
+        for _, setting := range settings {
+          fmt.Printf("    %-*s", longest_setting_name+2, setting+":")
+          fmt.Printf("\"%v\" => \"%v\"\n", changelog[name][subsection][setting]["From"], changelog[name][subsection][setting]["To"])
+        }
+      }
+
+      fmt.Printf("\n")
     }
   } else {
     fmt.Printf("\nNo changes discovered.\n")
