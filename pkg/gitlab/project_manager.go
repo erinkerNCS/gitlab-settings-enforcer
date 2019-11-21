@@ -63,9 +63,14 @@ func NewProjectManager(
 
 // ComplianceReady determines if a compliance configuration is present
 func (m *ProjectManager) ComplianceReady() bool {
+  m.logger.Debugf("---[ Config ]---")
+  m.logger.Debugf("%+v", m.config)
+
   if m.config.Compliance == nil {
+    m.logger.Debugf("Compliance field of Config not configured.")
     return false
   }
+
   return true
 }
 
@@ -113,7 +118,9 @@ func (m *ProjectManager) GetError() (bool) {
 func (m *ProjectManager) GenerateChangeLogReport() error {
   m.logger.Debugf("Generate Change Log Report")
 
-  m.debugPrintAllSettings()
+  if err := m.debugPrintAllSettings(); err != nil {
+    panic(err)
+  }
 
   // Get differences
   approvalDifflog, err := diff.Diff(m.ApprovalSettingsOriginal, m.ApprovalSettingsUpdated)
@@ -229,7 +236,9 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
 // GenerateComplianceReport prints to console the compliance state of mandatory settings
 func (m *ProjectManager) GenerateComplianceReport() error {
 
-  m.debugPrintAllSettings()
+  if err := m.debugPrintAllSettings(); err != nil {
+    panic(err)
+  }
 
   m.logger.Debugf("---[ Compliance Settings ]---")
   m.logger.Debugf("%v\n", m.config.Compliance)
@@ -239,7 +248,7 @@ func (m *ProjectManager) GenerateComplianceReport() error {
 
   // Create sorted list of projects
   var project_names []string
-  for project_name, _ := range m.ProjectSettingsOriginal {
+  for project_name := range m.ProjectSettingsOriginal {
     // Add to list of project names to allow sorting
     project_names = append(project_names, project_name)
 
@@ -259,7 +268,7 @@ func (m *ProjectManager) GenerateComplianceReport() error {
   for _, subsection := range subsections {
     settings[subsection] = make([]string, 0)
 
-    for setting, _ := range m.config.Compliance.Mandatory[subsection] {
+    for setting := range m.config.Compliance.Mandatory[subsection] {
       settings[subsection] = append(settings[subsection], setting)
       if len(setting) > longest_setting_name {
         longest_setting_name = len(setting)
