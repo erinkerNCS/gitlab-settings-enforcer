@@ -5,6 +5,7 @@ import (
   "fmt"
   "net/http"
   "net/url"
+  "reflect"
   "regexp"
   "sort"
   "strconv"
@@ -60,6 +61,14 @@ func NewProjectManager(
  * Exported Functions *
  **********************/
 
+// ComplianceReady determines if a compliance configuration is present
+func (m *ProjectManager) ComplianceReady() bool {
+  if m.config.Compliance == nil {
+    return false
+  }
+  return true
+}
+
 // EnsureBranchesAndProtection ensures that
 //  1) the default branch exists
 //  2) all of the protected branches are configured correctly
@@ -104,22 +113,7 @@ func (m *ProjectManager) GetError() (bool) {
 func (m *ProjectManager) GenerateChangeLogReport() error {
   m.logger.Debugf("Generate Change Log Report")
 
-  m.logger.Debugf("---[ ORIGINAL APPROVAL SETTINGS ]---")
-  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsOriginal); err != nil {
-    m.logger.Debugf("Error printing Original Approval Settings")
-  }
-  m.logger.Debugf("---[ UPDATED APPROVAL SETTINGS ]---")
-  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsUpdated); err != nil {
-    m.logger.Debugf("Error printing Updated Approval Settings")
-  }
-  m.logger.Debugf("---[ ORIGINAL PROJECT SETTINGS ]---")
-  if err := m.debugPrintProjectSettings(m.ProjectSettingsOriginal); err != nil {
-    m.logger.Debugf("Error printing Original Project Settings")
-  }
-  m.logger.Debugf("---[ UPDATED PROJECT SETTINGS ]---")
-  if err := m.debugPrintProjectSettings(m.ProjectSettingsUpdated); err != nil {
-    m.logger.Debugf("Error printing Updated Project Settings")
-  }
+  m.debugPrintAllSettings()
 
   // Get differences
   approvalDifflog, err := diff.Diff(m.ApprovalSettingsOriginal, m.ApprovalSettingsUpdated)
@@ -227,6 +221,96 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
     }
   } else {
     fmt.Printf("\nNo changes discovered.\n")
+  }
+
+  return nil
+}
+
+// GenerateComplianceReport prints to console the compliance state of mandatory settings
+func (m *ProjectManager) GenerateComplianceReport() error {
+
+  m.debugPrintAllSettings()
+
+  m.logger.Debugf("---[ Compliance Settings ]---")
+  m.logger.Debugf("%v\n", m.config.Compliance)
+
+  // Print Title
+  fmt.Printf("\nCOMPLIANCE REPORT\n")
+
+  // Create sorted list of projects
+  var project_names []string
+  for project_name, _ := range m.ProjectSettingsOriginal {
+    // Add to list of project names to allow sorting
+    project_names = append(project_names, project_name)
+
+  }
+  sort.Strings(project_names)
+
+  // Create sorted list of subsections
+  var subsections []string
+  for subsection := range m.config.Compliance.Mandatory {
+    subsections = append(subsections, subsection)
+  }
+  sort.Strings(subsections)
+
+  // Create sorted list of settings, per subsection
+  var longest_setting_name int
+  var settings = make(map[string][]string)
+  for _, subsection := range subsections {
+    settings[subsection] = make([]string, 0)
+
+    for setting, _ := range m.config.Compliance.Mandatory[subsection] {
+      settings[subsection] = append(settings[subsection], setting)
+      if len(setting) > longest_setting_name {
+        longest_setting_name = len(setting)
+      }
+    }
+    sort.Strings(settings[subsection])
+  }
+
+  // Loop through projects
+  for _, name := range project_names {
+    fmt.Printf("  %s\n", name)
+
+    // Loop through subsections
+    for _, subsection := range subsections {
+      fmt.Printf("    %s:\n", subsection)
+
+      // Loop through settings
+      for _, setting := range settings[subsection] {
+        fmt.Printf("      %-*s", longest_setting_name+2, setting+":")
+
+        var setting_value interface{}
+        switch subsection {
+        case "approval_settings":
+          structure := reflect.ValueOf(m.ApprovalSettingsOriginal[name])
+          field := structure.Elem().FieldByName(strcase.ToCamel(setting))
+          if field.IsValid() {
+            setting_value = field.Interface()
+          } else {
+            setting_value = "NOT VALID SETTING"
+          }
+        case "project_settings":
+          structure := reflect.ValueOf(m.ProjectSettingsOriginal[name])
+          field := structure.Elem().FieldByName(strcase.ToCamel(setting))
+          if field.IsValid() {
+            setting_value = field.Interface()
+          } else {
+            setting_value = "NOT VALID SETTING"
+          }
+        }
+
+        fmt.Printf("%v", setting_value)
+
+        if setting_value != m.config.Compliance.Mandatory[subsection][setting] {
+          fmt.Printf(" (%v)", m.config.Compliance.Mandatory[subsection][setting])
+        }
+
+        fmt.Printf("\n")
+      }
+    }
+
+    fmt.Printf("\n")
   }
 
   return nil
@@ -549,6 +633,28 @@ func (m *ProjectManager) convertEditProjectOptionsToProject(current gitlab.EditP
   }
 
   return returnValue, nil
+}
+
+// debugPrintAllSettings prints to console all capture settings
+func (m *ProjectManager) debugPrintAllSettings() error {
+  m.logger.Debugf("---[ ORIGINAL APPROVAL SETTINGS ]---")
+  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsOriginal); err != nil {
+    m.logger.Debugf("Error printing Original Approval Settings")
+  }
+  m.logger.Debugf("---[ UPDATED APPROVAL SETTINGS ]---")
+  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsUpdated); err != nil {
+    m.logger.Debugf("Error printing Updated Approval Settings")
+  }
+  m.logger.Debugf("---[ ORIGINAL PROJECT SETTINGS ]---")
+  if err := m.debugPrintProjectSettings(m.ProjectSettingsOriginal); err != nil {
+    m.logger.Debugf("Error printing Original Project Settings")
+  }
+  m.logger.Debugf("---[ UPDATED PROJECT SETTINGS ]---")
+  if err := m.debugPrintProjectSettings(m.ProjectSettingsUpdated); err != nil {
+    m.logger.Debugf("Error printing Updated Project Settings")
+  }
+
+  return nil
 }
 
 // debugPrintProjectSettings prints to console a SettingsMap
