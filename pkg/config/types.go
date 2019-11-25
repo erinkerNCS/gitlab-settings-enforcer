@@ -35,7 +35,16 @@ type Config struct {
 
 // ComplianceSettings defines what is displayed and mandatory settings.
 type ComplianceSettings struct {
+  Email     EmailConfig                       `json:"email"`
   Mandatory map[string]map[string]interface{} `json:"mandatory"`
+}
+
+// EmailConfig
+type EmailConfig struct {
+  From      string
+  Port      int
+  Server    string
+  To        []string
 }
 
 // ProtectedBranch defines who can act on a protected branch

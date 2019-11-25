@@ -5,6 +5,7 @@ import (
   "fmt"
   "net/http"
   "net/url"
+  "net/smtp"
   "reflect"
   "regexp"
   "sort"
@@ -228,6 +229,101 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
     }
   } else {
     fmt.Printf("\nNo changes discovered.\n")
+  }
+
+  return nil
+}
+
+// GenerateComplianceEmail emails the compliance state of mandatory settings
+func (m *ProjectManager) GenerateComplianceEmail() error {
+  if err := m.debugPrintAllSettings(); err != nil {
+    panic(err)
+  }
+
+  m.logger.Debugf("---[ Compliance Settings ]---")
+  m.logger.Debugf("%v\n", m.config.Compliance)
+
+  // Print Title
+  email_body := fmt.Sprintf("\nCOMPLIANCE REPORT\n")
+
+  // Create sorted list of projects
+  var project_names []string
+  for project_name := range m.ProjectSettingsOriginal {
+    // Add to list of project names to allow sorting
+    project_names = append(project_names, project_name)
+
+  }
+  sort.Strings(project_names)
+
+  // Create sorted list of subsections
+  var subsections []string
+  for subsection := range m.config.Compliance.Mandatory {
+    subsections = append(subsections, subsection)
+  }
+  sort.Strings(subsections)
+
+  // Create sorted list of settings, per subsection
+  var longest_setting_name int
+  var settings = make(map[string][]string)
+  for _, subsection := range subsections {
+    settings[subsection] = make([]string, 0)
+
+    for setting := range m.config.Compliance.Mandatory[subsection] {
+      settings[subsection] = append(settings[subsection], setting)
+      if len(setting) > longest_setting_name {
+        longest_setting_name = len(setting)
+      }
+    }
+    sort.Strings(settings[subsection])
+  }
+
+  // Loop through projects
+  for _, name := range project_names {
+    email_body += fmt.Sprintf("  %s\n", name)
+
+    // Loop through subsections
+    for _, subsection := range subsections {
+      email_body += fmt.Sprintf("    %s:\n", subsection)
+
+      // Loop through settings
+      for _, setting := range settings[subsection] {
+        email_body += fmt.Sprintf("      %-*s", longest_setting_name+2, setting+":")
+
+        var setting_value interface{}
+        switch subsection {
+        case "approval_settings":
+          structure := reflect.ValueOf(m.ApprovalSettingsOriginal[name])
+          field := structure.Elem().FieldByName(strcase.ToCamel(setting))
+          if field.IsValid() {
+            setting_value = field.Interface()
+          } else {
+            setting_value = "NOT VALID SETTING"
+          }
+        case "project_settings":
+          structure := reflect.ValueOf(m.ProjectSettingsOriginal[name])
+          field := structure.Elem().FieldByName(strcase.ToCamel(setting))
+          if field.IsValid() {
+            setting_value = field.Interface()
+          } else {
+            setting_value = "NOT VALID SETTING"
+          }
+        }
+
+        email_body += fmt.Sprintf("%v", setting_value)
+
+        if setting_value != m.config.Compliance.Mandatory[subsection][setting] {
+          email_body += fmt.Sprintf(" (%v)", m.config.Compliance.Mandatory[subsection][setting])
+        }
+
+        email_body += fmt.Sprintf("\n")
+      }
+    }
+
+    email_body += fmt.Sprintf("\n")
+  }
+
+  if err := m.SendEmail(m.config.Compliance.Email.To, m.config.Compliance.Email.From, "Compliance Report", email_body); err != nil {
+    m.logger.Fatal(err)
   }
 
   return nil
@@ -470,6 +566,48 @@ func (m *ProjectManager) GetSubgroupID(path string, indent int, group_ID int) (i
 func (m *ProjectManager) SetError(state bool) (bool) {
   m.config.Error = state
   return m.config.Error
+}
+
+// SendEmail
+func (m *ProjectManager) SendEmail(to []string, from string, subject string, body string) error {
+
+  // Connect to remote SMTP server
+  smtp_server, err := smtp.Dial(m.config.Compliance.Email.Server+":"+strconv.Itoa(m.config.Compliance.Email.Port))
+  if err != nil {
+    m.logger.Fatal(err)
+  }
+
+  // Set the sender
+  if err := smtp_server.Mail(from); err != nil {
+    m.logger.Fatal(err)
+  }
+
+  // Set the recipient
+  if err := smtp_server.Rcpt(strings.Join(to, ",")); err != nil {
+    m.logger.Fatal(err)
+  }
+
+  // Send the email body
+  smtp_writer, err := smtp_server.Data()
+  if err != nil {
+    m.logger.Fatal(err)
+  }
+  _, err = fmt.Fprint(smtp_writer, body)
+  if err != nil {
+    m.logger.Fatal(err)
+  }
+  err = smtp_writer.Close()
+  if err != nil {
+    m.logger.Fatal(err)
+  }
+
+  // Send the QUIT command and close the connection.
+  err = smtp_server.Quit()
+  if err != nil {
+    m.logger.Fatal(err)
+  }
+
+  return nil
 }
 
 // UpdateProjectMergeRequestSettings updates the project settings on gitlab

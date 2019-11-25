@@ -70,6 +70,11 @@ var complianceCmd = &cobra.Command{
       manager.SetError(true)
     }
 
+    if err := manager.GenerateComplianceEmail(); err != nil {
+      logger.Errorf("failed to email changelog report: %v", err)
+      manager.SetError(true)
+    }
+
     if manager.GetError() {
       logger.Fatal("Error(s) encountered.")
     }
