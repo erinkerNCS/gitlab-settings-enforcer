@@ -20,9 +20,13 @@ type groupsClient interface {
 
 type projectsClient interface {
   ChangeApprovalConfiguration(pid interface{}, opt *gitlab.ChangeApprovalConfigurationOptions, options ...gitlab.OptionFunc) (*gitlab.ProjectApprovals, *gitlab.Response, error)
+  CreateProjectApprovalRule(pid interface{}, opt *gitlab.CreateProjectLevelRuleOptions, options ...gitlab.OptionFunc) (*gitlab.ProjectApprovalRule, *gitlab.Response, error)
+  DeleteProjectApprovalRule(pid interface{}, approvalRule int, options ...gitlab.OptionFunc) (*gitlab.Response, error)
   GetApprovalConfiguration(pid interface{}, options ...gitlab.OptionFunc) (*gitlab.ProjectApprovals, *gitlab.Response, error)
   GetProject(pid interface{}, opt *gitlab.GetProjectOptions, options ...gitlab.OptionFunc) (*gitlab.Project, *gitlab.Response, error)
+  GetProjectApprovalRules(pid interface{}, options ...gitlab.OptionFunc) ([]*gitlab.ProjectApprovalRule, *gitlab.Response, error)
   EditProject(pid interface{}, opt *gitlab.EditProjectOptions, options ...gitlab.OptionFunc) (*gitlab.Project, *gitlab.Response, error)
+  UpdateProjectApprovalRule(pid interface{}, approvalRule int, opt *gitlab.UpdateProjectLevelRuleOptions, options ...gitlab.OptionFunc) (*gitlab.ProjectApprovalRule, *gitlab.Response, error)
 }
 
 type protectedBranchesClient interface {

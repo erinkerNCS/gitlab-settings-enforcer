@@ -29,6 +29,8 @@ type ProjectManager struct {
   config                   *config.Config
   ApprovalSettingsOriginal map[string]*gitlab.ProjectApprovals
   ApprovalSettingsUpdated  map[string]*gitlab.ProjectApprovals
+  ApprovalRulesOriginal    map[string][]*gitlab.ProjectApprovalRule
+  ApprovalRulesUpdated     map[string][]*gitlab.ProjectApprovalRule
   ProjectSettingsOriginal  map[string]*gitlab.Project
   ProjectSettingsUpdated   map[string]*gitlab.Project
 }
@@ -51,6 +53,8 @@ func NewProjectManager(
     config:                   config,
     ApprovalSettingsOriginal: make(map[string]*gitlab.ProjectApprovals),
     ApprovalSettingsUpdated:  make(map[string]*gitlab.ProjectApprovals),
+    ApprovalRulesOriginal:    make(map[string][]*gitlab.ProjectApprovalRule),
+    ApprovalRulesUpdated:     make(map[string][]*gitlab.ProjectApprovalRule),
     ProjectSettingsOriginal:  make(map[string]*gitlab.Project),
     ProjectSettingsUpdated:   make(map[string]*gitlab.Project),
   }
@@ -100,25 +104,12 @@ func (m *ProjectManager) GetError() (bool) {
   return m.config.Error
 }
 
-// GenerateChangeLogReport to console the altered project settings
+// GenerateChangeLogReport sends to console all altered settings
 func (m *ProjectManager) GenerateChangeLogReport() error {
   m.logger.Debugf("Generate Change Log Report")
 
-  m.logger.Debugf("---[ ORIGINAL APPROVAL SETTINGS ]---")
-  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsOriginal); err != nil {
-    m.logger.Debugf("Error printing Original Approval Settings")
-  }
-  m.logger.Debugf("---[ UPDATED APPROVAL SETTINGS ]---")
-  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsUpdated); err != nil {
-    m.logger.Debugf("Error printing Updated Approval Settings")
-  }
-  m.logger.Debugf("---[ ORIGINAL PROJECT SETTINGS ]---")
-  if err := m.debugPrintProjectSettings(m.ProjectSettingsOriginal); err != nil {
-    m.logger.Debugf("Error printing Original Project Settings")
-  }
-  m.logger.Debugf("---[ UPDATED PROJECT SETTINGS ]---")
-  if err := m.debugPrintProjectSettings(m.ProjectSettingsUpdated); err != nil {
-    m.logger.Debugf("Error printing Updated Project Settings")
+  if err := m.debugPrintAllSettings(); err != nil {
+    panic(err)
   }
 
   // Convert from per-change to per-path orginzation
@@ -237,7 +228,24 @@ func (m *ProjectManager) GenerateChangeLogReport() error {
   return nil
 }
 
-// GetProjectMergeRequestSettings identifies the current state of a GitLab projece
+// GetProjectApprovalRules retrieves current approval rules of provide project
+func (m *ProjectManager) GetProjectApprovalRules(project gitlab.Project) ([]*gitlab.ProjectApprovalRule, error) {
+  m.logger.Debugf("Get approval rules of project %s ...", project.PathWithNamespace)
+
+  returned_rules, response, err := m.projectsClient.GetProjectApprovalRules(project.ID)
+  if err != nil {
+    return nil, fmt.Errorf("failed to get current approval rules of project %s: %v", project.PathWithNamespace, err)
+  }
+
+  m.logger.Debugf("---[ HTTP Response for GetProjectApprovalRules ]---\n")
+  m.logger.Debugf("%v\n", response)
+  m.logger.Debugf("---[ Returned Rules for GetProjectApprovalRules ]---\n")
+  m.logger.Debugf("%v\n", returned_rules)
+
+  return returned_rules, nil
+}
+
+// GetProjectApprovalSettings retrieves current approval settings of provided project
 func (m *ProjectManager) GetProjectApprovalSettings(project gitlab.Project) (*gitlab.ProjectApprovals, error) {
   m.logger.Debugf("Get merge request approval settings of project %s ...", project.PathWithNamespace)
 
@@ -254,7 +262,7 @@ func (m *ProjectManager) GetProjectApprovalSettings(project gitlab.Project) (*gi
   return returned_approval, nil
 }
 
-// GetProjects fetches a list of accessible repos within the groups set in config file
+// GetProjects fetches a list of accessible repos within the group set in config file
 func (m *ProjectManager) GetProjects() ([]gitlab.Project, error) {
   var repos []gitlab.Project
 
@@ -317,8 +325,7 @@ func (m *ProjectManager) GetProjects() ([]gitlab.Project, error) {
   return repos, nil
 }
 
-// GetProjectSettings gets the settings in GitLab for the provided project, using
-// the Project API
+// GetProjectSettings gets the settings in GitLab for the provided project, using the Project API
 // https://docs.gitlab.com/ee/api/projects.html
 func (m *ProjectManager) GetProjectSettings(project gitlab.Project) (*gitlab.Project, error) {
   m.logger.Debugf("Get project settings of project %s ...", project.PathWithNamespace)
@@ -336,7 +343,7 @@ func (m *ProjectManager) GetProjectSettings(project gitlab.Project) (*gitlab.Pro
   return returned_project, nil
 }
 
-// GetSubgroupID walks the provided path, returning the Group ID of the last desired subgroup.
+// GetSubgroupID walks the provided group path, returning the Group ID of the last identified subgroup.
 func (m *ProjectManager) GetSubgroupID(path string, indent int, group_ID int) (int, error) {
   var subgroup_ID int
 
@@ -378,13 +385,79 @@ func (m *ProjectManager) GetSubgroupID(path string, indent int, group_ID int) (i
   return subgroup_ID, nil
 }
 
-// SetError returns the Error status
+// SetError changes the Error status
 func (m *ProjectManager) SetError(state bool) (bool) {
   m.config.Error = state
   return m.config.Error
 }
 
-// UpdateProjectMergeRequestSettings updates the project settings on gitlab
+// UpdateProjectApprovalRules updates the approval rule(s) on a project
+func (m *ProjectManager) UpdateProjectApprovalRules(project gitlab.Project, dryrun bool) error {
+  m.logger.Debugf("Updating approval rules of project %s [%d]...", project.PathWithNamespace, project.ID)
+
+  // Exit if nothing to configure
+  if m.config.ApprovalRules.Definitions == nil {
+    m.logger.Debugf("No approval_rules section provided in config")
+    return nil
+  }
+
+  // Get current approval rules
+  approvalRules, err := m.GetProjectApprovalRules(project)
+  if err != nil {
+    return fmt.Errorf("failed to get current approval rules of project %s: %v", project.PathWithNamespace, err)
+  }
+
+  // Record current approval rules
+  m.ApprovalRulesOriginal[project.PathWithNamespace] = approvalRules
+
+  // Determine if a rule change is expected
+  var rulesToChange []gitlab.ProjectApprovalRule
+  for _, ruleConfig := range m.config.ApprovalRules.Definitions {
+    rule, err := m.convertCreateProjectLevelRuleOptionsToProjectApprovalRule(*ruleConfig)
+    if err != nil {
+      return err
+    }
+    rulesToChange = append(rulesToChange, rule)
+  }
+
+  change_expected := false
+  for _, rule := range approvalRules {
+    for _, rule_change := range rulesToChange {
+      if rule.Name == rule_change.Name {
+        if m.willChangeApprovalRule(rule, &rule_change) {
+          change_expected = true
+        }
+        continue
+      }
+    }
+  }
+
+  if ! change_expected {
+    m.logger.Debugf("No action required.")
+
+    // Record current approval rules
+    m.ApprovalRulesUpdated[project.PathWithNamespace] = approvalRules
+
+    return nil
+  }
+
+  // TODO: Implement changes
+
+  // Get new settings states
+  approvalRules, err = m.GetProjectApprovalRules(project)
+  if err != nil {
+    return fmt.Errorf("failed to get current approval rules for project %s: %v", project.PathWithNamespace, err)
+  }
+
+  // Record current settings states
+  m.ApprovalRulesUpdated[project.PathWithNamespace] = approvalRules
+
+  m.logger.Debugf("Updating approval rules for project %s done.", project.PathWithNamespace)
+
+  return nil
+}
+
+// UpdateProjectApprovalSettings changes the approval settings on a project
 func (m *ProjectManager) UpdateProjectApprovalSettings(project gitlab.Project, dryrun bool) error {
   m.logger.Debugf("Updating merge request approval settings of project %s [%d]...", project.PathWithNamespace, project.ID)
 
@@ -451,8 +524,7 @@ func (m *ProjectManager) UpdateProjectApprovalSettings(project gitlab.Project, d
   return nil
 }
 
-// UpdateProjectSettings updates the settings in GitLab for the provided project,
-// using the Project API
+// UpdateProjectSettings updates the settings in GitLab for the provided project using the Project API
 // https://docs.gitlab.com/ee/api/projects.html
 func (m *ProjectManager) UpdateProjectSettings(project gitlab.Project, dryrun bool) error {
   m.logger.Debugf("Updating project settings of project %s ...", project.PathWithNamespace)
@@ -556,6 +628,64 @@ func (m *ProjectManager) convertEditProjectOptionsToProject(current gitlab.EditP
   return returnValue, nil
 }
 
+// convertCreateProjectLevelRulesOptionsToProjectApprovalRule
+func (m *ProjectManager) convertCreateProjectLevelRuleOptionsToProjectApprovalRule(current gitlab.CreateProjectLevelRuleOptions) (gitlab.ProjectApprovalRule, error) {
+  jsonData, err := json.Marshal(current)
+  if err != nil {
+    return gitlab.ProjectApprovalRule{}, fmt.Errorf("failed to convert CreateProjectLevelRulesOptions to json: %v", err)
+  }
+
+  var returnValue gitlab.ProjectApprovalRule
+  err = json.Unmarshal(jsonData, &returnValue)
+  if err != nil {
+    return gitlab.ProjectApprovalRule{}, fmt.Errorf("failed to convert json to Project struct: %v", err)
+  }
+
+  return returnValue, nil
+}
+
+// debugPrintAllSettubgs prints all Settings captured to console
+func (m *ProjectManager) debugPrintAllSettings() error {
+  m.logger.Debugf("---[ ORIGINAL APPROVAL RULES ]---")
+  if err := m.debugPrintApprovalRules(m.ApprovalRulesOriginal); err != nil {
+    m.logger.Debugf("Error printing Original Approval Rules")
+  }
+  m.logger.Debugf("---[ UPDATED APPROVAL RULES ]---")
+  if err := m.debugPrintApprovalRules(m.ApprovalRulesUpdated); err != nil {
+    m.logger.Debugf("Error printing Updated Approval Rules")
+  }
+  m.logger.Debugf("---[ ORIGINAL APPROVAL SETTINGS ]---")
+  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsOriginal); err != nil {
+    m.logger.Debugf("Error printing Original Approval Rules")
+  }
+  m.logger.Debugf("---[ UPDATED APPROVAL SETTINGS ]---")
+  if err := m.debugPrintApprovalSettings(m.ApprovalSettingsUpdated); err != nil {
+    m.logger.Debugf("Error printing Updated Approval Rules")
+  }
+  m.logger.Debugf("---[ ORIGINAL PROJECT SETTINGS ]---")
+  if err := m.debugPrintProjectSettings(m.ProjectSettingsOriginal); err != nil {
+    m.logger.Debugf("Error printing Original Project Rules")
+  }
+  m.logger.Debugf("---[ UPDATED PROJECT SETTINGS ]---")
+  if err := m.debugPrintProjectSettings(m.ProjectSettingsUpdated); err != nil {
+    m.logger.Debugf("Error printing Updated Project Rules")
+  }
+
+  return nil
+}
+
+// debugPrintProjectSettings prints to console a SettingsMap
+func (m *ProjectManager) debugPrintApprovalRules(rules map[string][]*gitlab.ProjectApprovalRule) error {
+  jsonData, err := json.MarshalIndent(rules, "", "  ")
+  if err != nil {
+    return fmt.Errorf("failed to convert ApprovalRules to JSON: %v", err)
+  }
+
+  m.logger.Debugf(string(jsonData))
+
+  return nil
+}
+
 // debugPrintProjectSettings prints to console a SettingsMap
 func (m *ProjectManager) debugPrintApprovalSettings(settings map[string]*gitlab.ProjectApprovals) error {
   jsonData, err := json.MarshalIndent(settings, "", "  ")
@@ -613,6 +743,22 @@ func (m *ProjectManager) ensureDefaultBranch(project gitlab.Project, dryrun bool
   }
 
   return nil
+}
+
+// willChangeApprovalRule takes two ProjectApprovalRule objects, and confirms if the 2nd one changes the 1st
+func (m *ProjectManager) willChangeApprovalRule(current *gitlab.ProjectApprovalRule, changes *gitlab.ProjectApprovalRule) bool {
+  changelog, _ := diff.Diff(current, changes)
+
+  changeExpected := false
+  fmt.Printf("%v\n", changelog)
+
+  for _, change := range changelog {
+    if change.Type == "update" {
+      changeExpected = true
+    }
+  }
+
+  return changeExpected
 }
 
 // willChangeApprovalSettings takes two ProjectSettings, and confirms if the 2nd one changes the 1st

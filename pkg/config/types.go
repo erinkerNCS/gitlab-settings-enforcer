@@ -29,7 +29,14 @@ type Config struct {
   ProtectedBranches   []ProtectedBranch                                 `json:"protected_branches"`
 
   ApprovalSettings    *gitlab.ChangeApprovalConfigurationOptions        `json:"approval_settings"`
+  ApprovalRules       ApprovalRulesConfig                               `json:"approval_rules"`
   ProjectSettings     *gitlab.EditProjectOptions                        `json:"project_settings"`
+}
+
+// ApprovalRulesConfig defines how to manage Approval Rules
+type ApprovalRulesConfig struct {
+  Definitions []*gitlab.CreateProjectLevelRuleOptions  `json:"definitions"`
+  Exclusive   bool                                     `json:"exclusive"`
 }
 
 // ProtectedBranch defines who can act on a protected branch

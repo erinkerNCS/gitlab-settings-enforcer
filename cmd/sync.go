@@ -52,6 +52,12 @@ var syncCmd = &cobra.Command{
         manager.SetError(true)
       }
 
+      // Update approval rules
+      if err := manager.UpdateProjectApprovalRules(project, env.Dryrun); err != nil {
+        logger.Errorf("failed to update approval rules of repo %v: %v", project.PathWithNamespace, err)
+        manager.SetError(true)
+      }
+
       // Update approval settings
       if err := manager.UpdateProjectApprovalSettings(project, env.Dryrun); err != nil {
         logger.Errorf("failed to update approval settings of repo %v: %v", project.PathWithNamespace, err)
