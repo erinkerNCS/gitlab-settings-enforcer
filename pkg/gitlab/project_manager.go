@@ -243,9 +243,6 @@ func (m *ProjectManager) GenerateComplianceEmail() error {
   m.logger.Debugf("---[ Compliance Settings ]---")
   m.logger.Debugf("%v\n", m.config.Compliance)
 
-  // Print Title
-  email_body := fmt.Sprintf("\nCOMPLIANCE REPORT\n")
-
   // Create sorted list of projects
   var project_names []string
   for project_name := range m.ProjectSettingsOriginal {
@@ -277,17 +274,26 @@ func (m *ProjectManager) GenerateComplianceEmail() error {
     sort.Strings(settings[subsection])
   }
 
+  // Print Title
+  email_body := fmt.Sprintf("\r\n<h2>Compliance Report</h2>\r\n")
+  email_body += fmt.Sprintf("<table>\r\n")
+
   // Loop through projects
   for _, name := range project_names {
-    email_body += fmt.Sprintf("  %s\n", name)
+    email_body += fmt.Sprintf(" <tr>\r\n")
+    email_body += fmt.Sprintf("  <td colspan=\"2\" style=\"text-indent:20px\"><b>%s</b></td>\r\n", name)
+    email_body += fmt.Sprintf(" </tr>\r\n")
 
     // Loop through subsections
     for _, subsection := range subsections {
-      email_body += fmt.Sprintf("    %s:\n", subsection)
+      email_body += fmt.Sprintf(" <tr>\r\n")
+      email_body += fmt.Sprintf("  <td colspan=\"2\" style=\"text-indent:40px\"><b>%s</b></td>\r\n", subsection)
+      email_body += fmt.Sprintf(" </tr>\r\n")
 
       // Loop through settings
       for _, setting := range settings[subsection] {
-        email_body += fmt.Sprintf("      %-*s", longest_setting_name+2, setting+":")
+        email_body += fmt.Sprintf(" <tr>\r\n")
+        email_body += fmt.Sprintf("  <td style=\"text-indent:60px\">%-*s</td>", longest_setting_name+2, setting+":")
 
         var setting_value interface{}
         switch subsection {
@@ -309,17 +315,18 @@ func (m *ProjectManager) GenerateComplianceEmail() error {
           }
         }
 
-        email_body += fmt.Sprintf("%v", setting_value)
+        email_body += fmt.Sprintf("  <td style=\"text-indent:40px\">%v", setting_value)
 
         if setting_value != m.config.Compliance.Mandatory[subsection][setting] {
           email_body += fmt.Sprintf(" (%v)", m.config.Compliance.Mandatory[subsection][setting])
         }
 
-        email_body += fmt.Sprintf("\n")
+        email_body += fmt.Sprintf("</td>\r\n")
+        email_body += fmt.Sprintf(" </tr>\r\n")
       }
     }
 
-    email_body += fmt.Sprintf("\n")
+    email_body += fmt.Sprintf("</table>\r\n")
   }
 
   if err := m.SendEmail(m.config.Compliance.Email.To, m.config.Compliance.Email.From, "Compliance Report", email_body); err != nil {
@@ -331,7 +338,6 @@ func (m *ProjectManager) GenerateComplianceEmail() error {
 
 // GenerateComplianceReport prints to console the compliance state of mandatory settings
 func (m *ProjectManager) GenerateComplianceReport() error {
-
   if err := m.debugPrintAllSettings(); err != nil {
     panic(err)
   }
@@ -570,7 +576,6 @@ func (m *ProjectManager) SetError(state bool) (bool) {
 
 // SendEmail
 func (m *ProjectManager) SendEmail(to []string, from string, subject string, body string) error {
-
   // Connect to remote SMTP server
   smtp_server, err := smtp.Dial(m.config.Compliance.Email.Server+":"+strconv.Itoa(m.config.Compliance.Email.Port))
   if err != nil {
@@ -592,10 +597,25 @@ func (m *ProjectManager) SendEmail(to []string, from string, subject string, bod
   if err != nil {
     m.logger.Fatal(err)
   }
-  _, err = fmt.Fprint(smtp_writer, body)
+
+  message := fmt.Sprintf("Content-Type: text/html; charset=UTF-8\r\n")
+  message += fmt.Sprintf("From: %s\r\n", from)
+  message += fmt.Sprintf("To: %s\r\n", strings.Join(to, ","))
+  message += fmt.Sprintf("Subject: %s\r\n", subject)
+  message += fmt.Sprintf("<html>\r\n")
+  message += fmt.Sprintf(" <head>\r\n")
+  message += fmt.Sprintf("  <title>%s</title>\r\n", subject)
+  message += fmt.Sprintf(" </head>\r\n")
+  message += fmt.Sprintf(" <body>\r\n")
+  message += fmt.Sprintf("\r\n%s\r\n", body)
+  message += fmt.Sprintf(" </body>\r\n")
+  message += fmt.Sprintf("</html>")
+
+  _, err = smtp_writer.Write([]byte(message))
   if err != nil {
     m.logger.Fatal(err)
   }
+
   err = smtp_writer.Close()
   if err != nil {
     m.logger.Fatal(err)
